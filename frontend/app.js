@@ -1,4 +1,4 @@
-const API = "http://127.0.0.1:8000/api";
+const API = "https://zeraty-gym.onrender.com";
 let token = localStorage.getItem("gym_token") || "";
 let currentMonth = new Date().toISOString().slice(0,7);
 let supplements = [];
