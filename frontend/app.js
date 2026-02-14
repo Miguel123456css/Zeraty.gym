@@ -1,424 +1,609 @@
+// =========================
+// Config
+// =========================
 const API = "https://zeraty-gym.onrender.com/api";
-let token = localStorage.getItem("gym_token") || "";
-let currentMonth = new Date().toISOString().slice(0,7);
-let supplements = [];
-let workoutDraft = {}; // {A:[{ex,series,reps,rest}], ...}
 
+// =========================
+// DOM helpers
+// =========================
 const $ = (id) => document.getElementById(id);
+const $$ = (sel) => document.querySelectorAll(sel);
 
-function setAuthUI(isAuthed){
-  $("authBox").style.display = isAuthed ? "none" : "block";
-  document.querySelectorAll(".tab").forEach(t => t.style.display = isAuthed ? "block" : "none");
-  $("btnLogout").style.display = isAuthed ? "inline-flex" : "none";
-}
+const authView = $("authView");
+const appView = $("appView");
 
-function headers(){
-  return token ? { "Authorization": "Bearer " + token } : {};
-}
+const emailEl = $("email");
+const passEl = $("password");
+const msgEl = $("authMsg");
+const btnLogin = $("btnLogin");
+const btnRegister = $("btnRegister");
 
-async function postForm(url, data){
-  const fd = new FormData();
-  Object.entries(data).forEach(([k,v]) => fd.append(k, v));
-  const res = await fetch(url, { method:"POST", body: fd, headers: headers() });
-  const j = await res.json().catch(()=> ({}));
-  if(!res.ok) throw new Error(j.detail || "Erro");
-  return j;
-}
+const statusDot = $("statusDot");
+const monthLabel = $("monthLabel");
 
-async function getJSON(url){
-  const res = await fetch(url, { headers: headers() });
-  const j = await res.json().catch(()=> ({}));
-  if(!res.ok) throw new Error(j.detail || "Erro");
-  return j;
-}
+// Views
+const viewTitle = $("viewTitle");
+const viewDesc = $("viewDesc");
+const dashboardView = $("dashboardView");
+const calendarView = $("calendarView");
+const photosView = $("photosView");
+const workoutsView = $("workoutsView");
+const statsView = $("statsView");
 
-function showTab(tabId){
-  document.querySelectorAll(".nav-item").forEach(b => b.classList.remove("active"));
-  document.querySelector(`.nav-item[data-tab="${tabId}"]`).classList.add("active");
-  document.querySelectorAll(".tab").forEach(t => t.classList.add("hidden"));
-  $(tabId).classList.remove("hidden");
-}
+const navBtns = $$(".nav-btn");
 
-document.querySelectorAll(".nav-item").forEach(btn=>{
-  btn.addEventListener("click", ()=> showTab(btn.dataset.tab));
-});
-
-$("btnLogout").onclick = ()=>{
-  token = "";
-  localStorage.removeItem("gym_token");
-  setAuthUI(false);
-};
-
-// Auth
-$("btnLogin").onclick = async ()=>{
-  $("authMsg").textContent = "";
-  try{
-    const j = await postForm(API + "/login", { email: $("email").value, password: $("password").value });
-    token = j.token;
-    localStorage.setItem("gym_token", token);
-    await boot();
-  }catch(e){ $("authMsg").textContent = e.message; }
-};
-
-$("btnRegister").onclick = async ()=>{
-  $("authMsg").textContent = "";
-  try{
-    const j = await postForm(API + "/register", { email: $("email").value, password: $("password").value });
-    token = j.token;
-    localStorage.setItem("gym_token", token);
-    await boot();
-  }catch(e){ $("authMsg").textContent = e.message; }
-};
-
-// Month picker
-$("monthPicker").value = currentMonth;
-$("monthPicker").onchange = async ()=>{
-  currentMonth = $("monthPicker").value;
-  $("miniMonth").textContent = currentMonth;
-  await refreshAll();
-};
+// Calendar
+const prevMonthBtn = $("prevMonth");
+const nextMonthBtn = $("nextMonth");
+const calendarMonth = $("calendarMonth");
+const calendarGrid = $("calendarGrid");
 
 // Supplements
-$("btnAddSupp").onclick = async ()=>{
-  try{
-    await postForm(API + "/supplements/add", { name: $("suppName").value });
-    $("suppName").value = "";
-    await loadSupplements();
+const suppName = $("suppName");
+const btnAddSupp = $("btnAddSupp");
+const suppList = $("suppList");
+
+// Photos
+const photoFile = $("photoFile");
+const photoNote = $("photoNote");
+const btnUploadPhoto = $("btnUploadPhoto");
+const photoGrid = $("photoGrid");
+
+// Workouts
+const workoutTitle = $("workoutTitle");
+const workoutText = $("workoutText");
+const btnSaveWorkout = $("btnSaveWorkout");
+const workoutList = $("workoutList");
+
+// Stats
+const heightEl = $("height");
+const weightEl = $("weight");
+const biotypeEl = $("biotype");
+const btnSaveProfile = $("btnSaveProfile");
+const recommendationEl = $("recommendation");
+
+// KPIs
+const kpiWorkouts = $("kpiWorkouts");
+const kpiSupp = $("kpiSupp");
+const kpiPhotos = $("kpiPhotos");
+
+// Logout
+const btnLogout = $("btnLogout");
+
+// =========================
+// State
+// =========================
+let authBusy = false;
+let token = localStorage.getItem("gym_token") || "";
+let me = null;
+
+let currentMonth = new Date();
+currentMonth.setDate(1);
+
+// =========================
+// UI helpers
+// =========================
+function setAuthMsg(text, ok = false) {
+  if (!msgEl) return;
+  msgEl.textContent = text || "";
+  msgEl.style.opacity = text ? "1" : "0";
+  msgEl.style.color = ok ? "#b7ffcf" : "#ffb7c7";
+}
+
+function setAuthBusyState(busy) {
+  authBusy = busy;
+  if (btnLogin) btnLogin.disabled = busy;
+  if (btnRegister) btnRegister.disabled = busy;
+}
+
+function showAuth() {
+  authView.classList.remove("hidden");
+  appView.classList.add("hidden");
+  statusDot.classList.remove("on");
+  statusDot.classList.add("off");
+}
+
+function showApp() {
+  authView.classList.add("hidden");
+  appView.classList.remove("hidden");
+  statusDot.classList.remove("off");
+  statusDot.classList.add("on");
+}
+
+function setActiveNav(viewKey) {
+  navBtns.forEach(b => b.classList.toggle("active", b.dataset.view === viewKey));
+
+  dashboardView.classList.toggle("hidden", viewKey !== "dashboard");
+  calendarView.classList.toggle("hidden", viewKey !== "calendar");
+  photosView.classList.toggle("hidden", viewKey !== "photos");
+  workoutsView.classList.toggle("hidden", viewKey !== "workouts");
+  statsView.classList.toggle("hidden", viewKey !== "stats");
+
+  const titleMap = {
+    dashboard: ["Dashboard", "Resumo do mês e consistência."],
+    calendar: ["Calendário", "Marque treino e suplementos por dia."],
+    photos: ["Físico (Fotos)", "Envie e acompanhe suas fotos."],
+    workouts: ["Meu Treino", "Crie e salve seus treinos."],
+    stats: ["Estatísticas Gerais", "Altura, peso e recomendações automáticas."]
+  };
+
+  const [t, d] = titleMap[viewKey] || ["Gym Tracker", "—"];
+  viewTitle.textContent = t;
+  viewDesc.textContent = d;
+}
+
+// =========================
+// HTTP
+// =========================
+async function apiFetch(path, options = {}) {
+  const headers = options.headers || {};
+  headers["Content-Type"] = headers["Content-Type"] || "application/json";
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+  const res = await fetch(`${API}${path}`, { ...options, headers });
+
+  let data = {};
+  try { data = await res.json(); } catch { data = {}; }
+  return { ok: res.ok, status: res.status, data };
+}
+
+// =========================
+// Auth
+// =========================
+async function doRegister() {
+  if (authBusy) return;
+  setAuthMsg("");
+
+  const email = (emailEl.value || "").trim();
+  const password = passEl.value || "";
+  if (!email || !password) return setAuthMsg("Preencha email e senha.");
+
+  setAuthBusyState(true);
+  try {
+    const reg = await apiFetch("/register", {
+      method: "POST",
+      body: JSON.stringify({ email, password })
+    });
+
+    if (!reg.ok) return setAuthMsg(reg.data?.detail || "Não foi possível criar conta.");
+
+    // auto-login depois do register
+    const log = await apiFetch("/login", {
+      method: "POST",
+      body: JSON.stringify({ email, password })
+    });
+
+    if (!log.ok) return setAuthMsg("Conta criada, mas falhou ao logar.");
+
+    token = log.data.token;
+    localStorage.setItem("gym_token", token);
+    setAuthMsg("Conta criada e logada ✅", true);
+
+    await boot();
+  } catch (e) {
+    setAuthMsg("Erro ao conectar na API.");
+  } finally {
+    setAuthBusyState(false);
+  }
+}
+
+async function doLogin() {
+  if (authBusy) return;
+  setAuthMsg("");
+
+  const email = (emailEl.value || "").trim();
+  const password = passEl.value || "";
+  if (!email || !password) return setAuthMsg("Preencha email e senha.");
+
+  setAuthBusyState(true);
+  try {
+    const log = await apiFetch("/login", {
+      method: "POST",
+      body: JSON.stringify({ email, password })
+    });
+
+    if (!log.ok) return setAuthMsg(log.data?.detail || "Login inválido.");
+
+    token = log.data.token;
+    localStorage.setItem("gym_token", token);
+    setAuthMsg("Logado ✅", true);
+
+    await boot();
+  } catch (e) {
+    setAuthMsg("Erro ao conectar na API.");
+  } finally {
+    setAuthBusyState(false);
+  }
+}
+
+function doLogout() {
+  localStorage.removeItem("gym_token");
+  token = "";
+  me = null;
+  showAuth();
+  setAuthMsg("");
+}
+
+// Bind auth buttons
+btnLogin?.addEventListener("click", (e) => { e.preventDefault(); doLogin(); });
+btnRegister?.addEventListener("click", (e) => { e.preventDefault(); doRegister(); });
+btnLogout?.addEventListener("click", (e) => { e.preventDefault(); doLogout(); });
+
+// =========================
+// App logic
+// =========================
+function monthStr(d) {
+  const mm = d.toLocaleString("pt-BR", { month: "long" });
+  return `${mm[0].toUpperCase() + mm.slice(1)} ${d.getFullYear()}`;
+}
+
+function isoDate(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+function renderCalendar(checkinsMap = {}, suppCheckinsMap = {}, supplements = []) {
+  calendarMonth.textContent = monthStr(currentMonth);
+  monthLabel.textContent = monthStr(currentMonth);
+
+  calendarGrid.innerHTML = "";
+
+  const year = currentMonth.getFullYear();
+  const month = currentMonth.getMonth();
+
+  const first = new Date(year, month, 1);
+  const startDay = first.getDay(); // 0 dom
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+
+  // padding (seg=1... dom=0). Vamos usar domingo como primeira coluna.
+  for (let i = 0; i < startDay; i++) {
+    const pad = document.createElement("div");
+    pad.className = "day";
+    pad.style.opacity = "0.25";
+    pad.style.pointerEvents = "none";
+    calendarGrid.appendChild(pad);
+  }
+
+  for (let day = 1; day <= daysInMonth; day++) {
+    const d = new Date(year, month, day);
+    const key = isoDate(d);
+
+    const dayEl = document.createElement("div");
+    dayEl.className = "day";
+    dayEl.innerHTML = `
+      <div class="dnum">${day}</div>
+      <div class="tags" id="tags-${key}"></div>
+    `;
+
+    const tags = dayEl.querySelector(`#tags-${CSS.escape(key)}`);
+
+    // treino
+    if (checkinsMap[key] === 1) addTag(tags, "Treino ✅");
+    if (checkinsMap[key] === 0) addTag(tags, "Treino ❌");
+
+    // suplementos
+    supplements.forEach(s => {
+      const skey = `${key}::${s.id}`;
+      if (suppCheckinsMap[skey] === 1) addTag(tags, `${s.name} ✅`);
+      if (suppCheckinsMap[skey] === 0) addTag(tags, `${s.name} ❌`);
+    });
+
+    dayEl.addEventListener("click", async () => {
+      // Toggle treino: null -> 1 -> 0 -> null
+      const cur = checkinsMap[key];
+      const next = (cur === undefined) ? 1 : (cur === 1 ? 0 : undefined);
+
+      if (next === undefined) {
+        // sem endpoint de delete; então setamos 0 (ou 1) e pronto
+        await apiFetch("/checkin", { method: "POST", body: JSON.stringify({ date: key, did_train: 0 }) });
+        checkinsMap[key] = 0;
+      } else {
+        await apiFetch("/checkin", { method: "POST", body: JSON.stringify({ date: key, did_train: next }) });
+        checkinsMap[key] = next;
+      }
+
+      // re-render (simples)
+      await loadCalendar();
+      await loadDashboard();
+    });
+
+    calendarGrid.appendChild(dayEl);
+  }
+}
+
+function addTag(container, text) {
+  const t = document.createElement("span");
+  t.className = "tag";
+  t.textContent = text;
+  container.appendChild(t);
+}
+
+async function loadSupplements() {
+  const r = await apiFetch("/supplements");
+  if (!r.ok) return [];
+  return r.data || [];
+}
+
+function renderSuppList(list) {
+  suppList.innerHTML = "";
+  list.forEach(s => {
+    const el = document.createElement("div");
+    el.className = "chip";
+    el.innerHTML = `<span>${s.name}</span><button title="remover">✕</button>`;
+    el.querySelector("button").addEventListener("click", async () => {
+      // se não existir endpoint de delete, só ignora (não vou inventar rota)
+      alert("Remover suplemento ainda não implementado no backend.");
+    });
+    suppList.appendChild(el);
+  });
+}
+
+btnAddSupp?.addEventListener("click", async () => {
+  const name = (suppName.value || "").trim();
+  if (!name) return;
+
+  const r = await apiFetch("/supplements/add", {
+    method: "POST",
+    body: JSON.stringify({ name })
+  });
+
+  if (r.ok) {
+    suppName.value = "";
     await loadCalendar();
-    await refreshDashboard(true);
-  }catch(e){ alert(e.message); }
-};
+    await loadDashboard();
+  } else {
+    alert(r.data?.detail || "Falha ao adicionar suplemento.");
+  }
+});
 
-// --- Workout builder ---
-function renderBuilder(){
-  const box = $("builderPreview");
-  box.innerHTML = "";
+prevMonthBtn?.addEventListener("click", async () => {
+  currentMonth = new Date(currentMonth.getFullYear(), currentMonth.getMonth() - 1, 1);
+  await loadCalendar();
+});
+nextMonthBtn?.addEventListener("click", async () => {
+  currentMonth = new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1, 1);
+  await loadCalendar();
+});
 
-  const keys = Object.keys(workoutDraft);
-  if(!keys.length){
-    box.innerHTML = `<div class="list-item"><span>Nenhum exercício ainda.</span></div>`;
+// Photos upload (se seu backend suportar)
+btnUploadPhoto?.addEventListener("click", async () => {
+  if (!photoFile.files || !photoFile.files[0]) return alert("Escolha uma imagem.");
+  const file = photoFile.files[0];
+  const note = (photoNote.value || "").trim();
+
+  const fd = new FormData();
+  fd.append("file", file);
+  fd.append("note", note);
+
+  const res = await fetch(`${API}/photos/upload`, {
+    method: "POST",
+    headers: token ? { "Authorization": `Bearer ${token}` } : {},
+    body: fd
+  });
+
+  if (!res.ok) {
+    let data = {};
+    try { data = await res.json(); } catch {}
+    alert(data?.detail || "Falha ao enviar foto.");
     return;
   }
 
-  for(const day of ["A","B","C","D","E"]){
-    if(!workoutDraft[day]?.length) continue;
-
-    const header = document.createElement("div");
-    header.className = "list-item";
-    header.innerHTML = `<span><b>Treino ${day}</b></span><span class="pill">${workoutDraft[day].length} ex</span>`;
-    box.appendChild(header);
-
-    workoutDraft[day].forEach((it, idx)=>{
-      const row = document.createElement("div");
-      row.className = "list-item";
-      row.innerHTML = `
-        <span>${it.ex} <span class="muted">— ${it.series}x ${it.reps} • ${it.rest}s</span></span>
-        <button class="btn ghost" data-day="${day}" data-idx="${idx}">Remover</button>
-      `;
-      row.querySelector("button").onclick = (e)=>{
-        const d = e.target.dataset.day;
-        const i = Number(e.target.dataset.idx);
-        workoutDraft[d].splice(i,1);
-        if(workoutDraft[d].length === 0) delete workoutDraft[d];
-        renderBuilder();
-      };
-      box.appendChild(row);
-    });
-  }
-}
-
-$("btnAddExercise").onclick = ()=>{
-  const day = $("dayKey").value;
-  const ex = ($("exName").value || "").trim();
-  const series = Number($("exSets").value || 3);
-  const reps = ($("exReps").value || "8-12").trim();
-  const rest = Number($("exRest").value || 90);
-  if(!ex) return;
-
-  workoutDraft[day] = workoutDraft[day] || [];
-  workoutDraft[day].push({ ex, series, reps, rest });
-  $("exName").value = "";
-  renderBuilder();
-};
-
-$("btnClearWorkout").onclick = ()=>{
-  workoutDraft = {};
-  renderBuilder();
-};
-
-$("btnSaveWorkout").onclick = async ()=>{
-  $("workMsg").textContent = "";
-  try{
-    if(!Object.keys(workoutDraft).length) return $("workMsg").textContent = "Adicione pelo menos 1 exercício.";
-
-    await postForm(API + "/workouts/save", {
-      title: $("workTitle").value || "Meu treino",
-      split: $("workSplit").value || "—",
-      data_json: JSON.stringify(workoutDraft)
-    });
-
-    $("workMsg").textContent = "Treino salvo ✅";
-    workoutDraft = {};
-    renderBuilder();
-    await loadWorkouts();
-  }catch(e){ $("workMsg").textContent = e.message; }
-};
-
-// Stats
-$("btnSaveProfile").onclick = async ()=>{
-  $("statsMsg").textContent = "";
-  try{
-    const j = await postForm(API + "/profile", {
-      height_cm: $("heightCm").value,
-      weight_kg: $("weightKg").value,
-      biotype: $("biotype").value,
-      goal: $("goal").value
-    });
-
-    const bmi = j.bmi ? j.bmi.toFixed(1) : "—";
-    const r = j.recommendation;
-
-    $("statsOut").textContent =
-`IMC (aprox): ${bmi}
-
-Treino recomendado:
-- ${r.treino}
-
-Repetições:
-- ${r.repeticoes}
-
-Cardio:
-- ${r.cardio}
-
-Nota biotipo:
-- ${r.nota_biotipo}
-`;
-    $("statsMsg").textContent = "Gerado ✅";
-  }catch(e){ $("statsMsg").textContent = e.message; }
-};
-
-// Photos (protegidas via blob)
-async function fetchImgObjectUrl(filename){
-  const res = await fetch(`${API}/photos/file/${encodeURIComponent(filename)}`, { headers: headers() });
-  if(!res.ok) throw new Error("Falha ao carregar foto");
-  const blob = await res.blob();
-  return URL.createObjectURL(blob);
-}
-
-$("btnUploadPhoto").onclick = async ()=>{
-  $("photoMsg").textContent = "";
-  const file = $("photoFile").files[0];
-  if(!file) return $("photoMsg").textContent = "Selecione uma imagem.";
-  const day = $("photoDay").value || new Date().toISOString().slice(0,10);
-
-  const fd = new FormData();
-  fd.append("taken_day", day);
-  fd.append("note", $("photoNote").value || "");
-  fd.append("file", file);
-
-  const res = await fetch(API + "/photos/upload", { method:"POST", body: fd, headers: headers() });
-  const j = await res.json().catch(()=> ({}));
-  if(!res.ok) return $("photoMsg").textContent = (j.detail || "Erro ao enviar");
-
-  $("photoMsg").textContent = "Foto salva ✅";
-  $("photoFile").value = "";
+  photoFile.value = "";
+  photoNote.value = "";
   await loadPhotos();
-  await refreshDashboard(true);
-};
+  await loadDashboard();
+});
 
-// Calendar helpers
-function daysInMonth(ym){
-  const [y,m] = ym.split("-").map(Number);
-  return new Date(y, m, 0).getDate();
+async function loadPhotos() {
+  const r = await apiFetch("/photos");
+  if (!r.ok) return;
+  const list = r.data || [];
+  photoGrid.innerHTML = "";
+  list.forEach(p => {
+    const el = document.createElement("div");
+    el.className = "photo";
+    el.innerHTML = `
+      <img src="${p.url}" alt="foto" />
+      <div class="meta">${p.date || ""}${p.note ? " • " + p.note : ""}</div>
+    `;
+    photoGrid.appendChild(el);
+  });
+  kpiPhotos.textContent = String(list.length);
 }
 
-function mkSwitch(on, cb){
-  const el = document.createElement("div");
-  el.className = "switch" + (on ? " on" : "");
-  el.onclick = ()=> {
-    el.classList.toggle("on");
-    cb(el.classList.contains("on"));
-  };
-  return el;
-}
+btnSaveWorkout?.addEventListener("click", async () => {
+  const title = (workoutTitle.value || "").trim();
+  const text = (workoutText.value || "").trim();
+  if (!title || !text) return alert("Preencha nome e conteúdo do treino.");
 
-async function loadSupplements(){
-  const j = await getJSON(API + "/supplements");
-  supplements = j.items || [];
-}
-
-async function loadCalendar(){
-  $("calendarGrid").innerHTML = "";
-  const max = daysInMonth(currentMonth);
-  const data = await getJSON(API + "/checkins?month=" + currentMonth);
-
-  for(let d=1; d<=max; d++){
-    const dayStr = `${currentMonth}-${String(d).padStart(2,"0")}`;
-    const card = document.createElement("div");
-    card.className = "day";
-
-    const head = document.createElement("div");
-    head.className = "dhead";
-    head.innerHTML = `<span>Dia</span><span>${d}</span>`;
-    card.appendChild(head);
-
-    const toggles = document.createElement("div");
-    toggles.className = "toggles";
-
-    // Treino
-    const trainedOn = (data.trained?.[dayStr] || 0) === 1;
-    const t = document.createElement("div");
-    t.className = "toggle";
-    t.innerHTML = `<span>Treinou?</span>`;
-    t.appendChild(mkSwitch(trainedOn, async (val)=>{
-      await postForm(API + "/checkin", { day: dayStr, trained: val ? 1 : 0 });
-      await refreshDashboard(true);
-    }));
-    toggles.appendChild(t);
-
-    // Suplementos
-    for(const s of supplements){
-      const took = (data.supp || []).find(x => x.day===dayStr && x.name===s)?.took === 1;
-      const row = document.createElement("div");
-      row.className = "toggle";
-      row.innerHTML = `<span>Tomou ${s}?</span>`;
-      row.appendChild(mkSwitch(!!took, async (val)=>{
-        await postForm(API + "/supp_checkin", { day: dayStr, supplement_name: s, took: val ? 1 : 0 });
-        await refreshDashboard(true);
-      }));
-      toggles.appendChild(row);
-    }
-
-    card.appendChild(toggles);
-    $("calendarGrid").appendChild(card);
-  }
-}
-
-function renderMonthLines(trainedMap, suppList){
-  const max = daysInMonth(currentMonth);
-  const lines = [];
-
-  lines.push({
-    title:"Treinou?",
-    marks: Array.from({length:max}, (_,i)=>{
-      const dayStr = `${currentMonth}-${String(i+1).padStart(2,"0")}`;
-      return (trainedMap?.[dayStr] || 0) === 1;
-    })
+  const r = await apiFetch("/workouts/save", {
+    method: "POST",
+    body: JSON.stringify({ title, text })
   });
 
-  for(const s of supplements){
-    lines.push({
-      title:`Tomou ${s}?`,
-      marks: Array.from({length:max}, (_,i)=>{
-        const dayStr = `${currentMonth}-${String(i+1).padStart(2,"0")}`;
-        return (suppList || []).some(x => x.day===dayStr && x.name===s && x.took===1);
-      })
-    });
-  }
+  if (!r.ok) return alert(r.data?.detail || "Falha ao salvar treino.");
 
-  $("monthLines").innerHTML = "";
-  for(const ln of lines){
-    const row = document.createElement("div");
-    row.className = "line";
-    const left = document.createElement("div");
-    left.className = "line-title";
-    left.textContent = ln.title;
+  workoutTitle.value = "";
+  workoutText.value = "";
+  await loadWorkouts();
+});
 
-    const marks = document.createElement("div");
-    marks.className = "marks";
-    ln.marks.forEach(v=>{
-      const m = document.createElement("div");
-      m.className = "mark " + (v ? "ok":"no");
-      m.textContent = v ? "✓" : "×";
-      marks.appendChild(m);
-    });
-
-    row.appendChild(left);
-    row.appendChild(marks);
-    $("monthLines").appendChild(row);
-  }
+async function loadWorkouts() {
+  const r = await apiFetch("/workouts");
+  if (!r.ok) return;
+  const list = r.data || [];
+  workoutList.innerHTML = "";
+  list.forEach(w => {
+    const el = document.createElement("div");
+    el.className = "item";
+    el.innerHTML = `<strong>${w.title}</strong><pre style="white-space:pre-wrap; margin:10px 0 0; color:rgba(255,255,255,.8)">${w.text}</pre>`;
+    workoutList.appendChild(el);
+  });
 }
 
-async function loadPhotos(){
-  const j = await getJSON(API + "/photos");
-  const items = j.items || [];
-  $("photoGrid").innerHTML = "";
+btnSaveProfile?.addEventListener("click", async () => {
+  const height = Number(heightEl.value || 0);
+  const weight = Number(weightEl.value || 0);
+  const biotype = biotypeEl.value || "";
 
-  $("kpiPhotos").textContent = String(items.length);
+  const r = await apiFetch("/profile", {
+    method: "POST",
+    body: JSON.stringify({ height, weight, biotype })
+  });
 
-  if(items.length){
-    $("imgFirst").src = await fetchImgObjectUrl(items[0].filename);
-    $("imgLast").src  = await fetchImgObjectUrl(items[items.length-1].filename);
+  if (!r.ok) return alert(r.data?.detail || "Falha ao salvar.");
+
+  renderRecommendation({ height, weight, biotype });
+  alert("Salvo ✅");
+});
+
+function renderRecommendation(p) {
+  const height = Number(p.height || 0);
+  const weight = Number(p.weight || 0);
+  const biotype = (p.biotype || "").toLowerCase();
+
+  if (!height || !weight || !biotype) {
+    recommendationEl.textContent = "Preencha seus dados para gerar recomendações.";
+    return;
+  }
+
+  const h = height / 100;
+  const imc = weight / (h*h);
+
+  let foco = "";
+  if (imc < 18.5) foco = "Ganho de massa (superávit calórico + progressão de cargas).";
+  else if (imc < 25) foco = "Recomposição (manter/leve superávit + treino consistente).";
+  else foco = "Definição (déficit leve + treino pesado + cardio moderado).";
+
+  let treino = "";
+  if (biotype === "ectomorfo") treino = "Foque em básicos, poucas séries, cargas altas, descanso maior. 3–5x/sem.";
+  else if (biotype === "mesomorfo") treino = "Boa resposta: volume moderado/alto, progressão semanal. 4–6x/sem.";
+  else treino = "Priorize consistência, volume moderado, cardio leve e dieta bem controlada. 4–6x/sem.";
+
+  recommendationEl.innerHTML = `
+    <div>IMC estimado: <b>${imc.toFixed(1)}</b></div>
+    <div style="margin-top:8px;"><b>Foco:</b> ${foco}</div>
+    <div style="margin-top:8px;"><b>Treino:</b> ${treino}</div>
+  `;
+}
+
+// Dashboard
+async function loadDashboard() {
+  // checkins do mês
+  const y = currentMonth.getFullYear();
+  const m = currentMonth.getMonth() + 1;
+  const r = await apiFetch(`/checkins?year=${y}&month=${m}`);
+  if (r.ok) {
+    const days = r.data || [];
+    const trained = days.filter(d => d.did_train === 1).length;
+    kpiWorkouts.textContent = String(trained);
   } else {
-    $("imgFirst").removeAttribute("src");
-    $("imgLast").removeAttribute("src");
+    kpiWorkouts.textContent = "—";
   }
 
-  for(const p of items.slice().reverse()){
-    const box = document.createElement("div");
-    box.className = "photo-item";
-    const img = document.createElement("img");
-    img.src = await fetchImgObjectUrl(p.filename);
-
-    const meta = document.createElement("div");
-    meta.className = "photo-meta";
-    meta.textContent = `${p.taken_day}${p.note ? " • " + p.note : ""}`;
-
-    box.appendChild(img);
-    box.appendChild(meta);
-    $("photoGrid").appendChild(box);
+  const supps = await loadSupplements();
+  // contagem simples (se backend expõe /supp_checkins do mês)
+  const r2 = await apiFetch(`/supp_checkins?year=${y}&month=${m}`);
+  if (r2.ok) {
+    const rows = r2.data || [];
+    const taken = rows.filter(x => x.took === 1).length;
+    kpiSupp.textContent = String(taken);
+  } else {
+    kpiSupp.textContent = "—";
   }
+
+  // fotos em loadPhotos atualiza kpiPhotos
 }
 
-async function loadWorkouts(){
-  const j = await getJSON(API + "/workouts");
-  const items = j.items || [];
-  $("workoutList").innerHTML = "";
+// Calendar load
+async function loadCalendar() {
+  const y = currentMonth.getFullYear();
+  const m = currentMonth.getMonth() + 1;
 
-  for(const w of items){
-    const row = document.createElement("div");
-    row.className = "list-item";
-    row.innerHTML = `<span>${w.title} <span class="muted">(${w.split})</span></span><span class="pill">#${w.id}</span>`;
-    $("workoutList").appendChild(row);
+  const supplements = await loadSupplements();
+  renderSuppList(supplements);
+
+  const checkinsResp = await apiFetch(`/checkins?year=${y}&month=${m}`);
+  const suppCheckResp = await apiFetch(`/supp_checkins?year=${y}&month=${m}`);
+
+  const checkinsMap = {};
+  if (checkinsResp.ok) {
+    (checkinsResp.data || []).forEach(r => { checkinsMap[r.date] = r.did_train; });
   }
+
+  const suppMap = {};
+  if (suppCheckResp.ok) {
+    (suppCheckResp.data || []).forEach(r => { suppMap[`${r.date}::${r.supplement_id}`] = r.took; });
+  }
+
+  renderCalendar(checkinsMap, suppMap, supplements);
 }
 
-async function refreshDashboard(reload=true){
-  if(!reload) return;
+// Navigation
+navBtns.forEach(btn => {
+  btn.addEventListener("click", async () => {
+    const key = btn.dataset.view;
+    setActiveNav(key);
 
-  const monthData = await getJSON(API + "/checkins?month=" + currentMonth);
-  const trainedMap = monthData.trained || {};
-  const suppList = monthData.supp || [];
+    if (key === "dashboard") {
+      await loadDashboard();
+      await loadPhotos();
+    }
+    if (key === "calendar") {
+      await loadCalendar();
+    }
+    if (key === "photos") {
+      await loadPhotos();
+    }
+    if (key === "workouts") {
+      await loadWorkouts();
+    }
+    if (key === "stats") {
+      // tenta carregar profile
+      const r = await apiFetch("/profile");
+      if (r.ok) {
+        const p = r.data || {};
+        heightEl.value = p.height || "";
+        weightEl.value = p.weight || "";
+        biotypeEl.value = p.biotype || "";
+        renderRecommendation(p);
+      }
+    }
+  });
+});
 
-  const trainCount = Object.values(trainedMap).filter(v=>v===1).length;
-  const suppCount = suppList.filter(x=>x.took===1).length;
+// =========================
+// Boot
+// =========================
+async function boot() {
+  if (!token) {
+    showAuth();
+    monthLabel.textContent = monthStr(currentMonth);
+    return;
+  }
 
-  $("kpiTrain").textContent = String(trainCount);
-  $("kpiSupp").textContent = String(suppCount);
+  const r = await apiFetch("/me");
+  if (!r.ok) {
+    // token inválido/expirado
+    doLogout();
+    return;
+  }
 
-  renderMonthLines(trainedMap, suppList);
-}
+  me = r.data;
+  showApp();
 
-async function refreshAll(){
-  await loadSupplements();
+  setActiveNav("dashboard");
+  monthLabel.textContent = monthStr(currentMonth);
+
+  await loadDashboard();
   await loadCalendar();
   await loadPhotos();
   await loadWorkouts();
-  await refreshDashboard(true);
-}
 
-async function boot(){
-  try{
-    const me = await getJSON(API + "/me");
-    $("miniUser").textContent = "ID " + me.user_id;
-    $("miniMonth").textContent = currentMonth;
-    setAuthUI(true);
-    showTab("tab-dashboard");
-    renderBuilder();
-    await refreshAll();
-  }catch{
-    setAuthUI(false);
-  }
+  // tenta profile
+  const p = await apiFetch("/profile");
+  if (p.ok) renderRecommendation(p.data || {});
 }
 
 boot();
