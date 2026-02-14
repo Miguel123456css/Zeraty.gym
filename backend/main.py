@@ -7,7 +7,7 @@ from fastapi.responses import FileResponse
 from passlib.context import CryptContext
 import jwt
 
-from db import init_db, conn, DATA_DIR
+from backend.db import init_db, conn, DATA_DIR
 
 APP_SECRET = "dev_secret_change_me"
 JWT_ALG = "HS256"
