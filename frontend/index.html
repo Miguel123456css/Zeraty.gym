@@ -1,0 +1,290 @@
+<!doctype html>
+<html lang="pt-br">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Gym Tracker</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <div class="bg-glow"></div>
+
+  <header class="topbar">
+    <div class="brand">
+      <div class="logo">G</div>
+      <div>
+        <div class="brand-title">Gym Tracker</div>
+        <div class="brand-sub">check-ins • fotos • treino • stats</div>
+      </div>
+    </div>
+    <div class="top-actions">
+      <button class="btn ghost" id="btnLogout">Sair</button>
+    </div>
+  </header>
+
+  <main class="layout">
+    <aside class="sidebar card">
+      <nav class="nav">
+        <button class="nav-item active" data-tab="tab-dashboard">Dashboard</button>
+        <button class="nav-item" data-tab="tab-calendar">Calendário</button>
+        <button class="nav-item" data-tab="tab-photos">Físico (Fotos)</button>
+        <button class="nav-item" data-tab="tab-workout">Meu Treino</button>
+        <button class="nav-item" data-tab="tab-stats">Estatísticas Gerais</button>
+      </nav>
+
+      <div class="mini card inner">
+        <div class="mini-title">Status</div>
+        <div class="mini-row"><span>Conectado</span> <span class="pill" id="miniUser">—</span></div>
+        <div class="mini-row"><span>Mês</span> <span class="pill" id="miniMonth">—</span></div>
+      </div>
+    </aside>
+
+    <section class="content">
+      <!-- LOGIN -->
+      <section class="card auth" id="authBox">
+        <h2>Entrar</h2>
+        <p class="muted">Suas fotos e dados ficam salvos no servidor (não dependem do navegador).</p>
+
+        <div class="grid2">
+          <div class="field">
+            <label>Email</label>
+            <input id="email" type="email" placeholder="voce@exemplo.com" />
+          </div>
+          <div class="field">
+            <label>Senha</label>
+            <input id="password" type="password" placeholder="••••••••" />
+          </div>
+        </div>
+
+        <div class="row">
+          <button class="btn" id="btnLogin">Login</button>
+          <button class="btn ghost" id="btnRegister">Criar conta</button>
+          <span class="muted" id="authMsg"></span>
+        </div>
+      </section>
+
+      <!-- DASHBOARD -->
+      <section class="card tab" id="tab-dashboard">
+        <div class="tab-head">
+          <h2>Dashboard</h2>
+          <div class="muted">Resumo rápido do seu mês.</div>
+        </div>
+
+        <div class="cards3">
+          <div class="card inner">
+            <div class="kpi-title">Treinos no mês</div>
+            <div class="kpi" id="kpiTrain">—</div>
+          </div>
+          <div class="card inner">
+            <div class="kpi-title">Check-ins suplementos</div>
+            <div class="kpi" id="kpiSupp">—</div>
+          </div>
+          <div class="card inner">
+            <div class="kpi-title">Fotos salvas</div>
+            <div class="kpi" id="kpiPhotos">—</div>
+          </div>
+        </div>
+
+        <div class="card inner">
+          <div class="section-title">Linha do mês</div>
+          <div class="legend">
+            <span class="dot ok"></span> ✓ fez
+            <span class="dot no"></span> × não fez
+          </div>
+          <div id="monthLines" class="month-lines"></div>
+        </div>
+      </section>
+
+      <!-- CALENDÁRIO -->
+      <section class="card tab hidden" id="tab-calendar">
+        <div class="tab-head">
+          <h2>Calendário</h2>
+          <div class="muted">Marque Treino + suplementos por dia.</div>
+        </div>
+
+        <div class="row wrap">
+          <div class="field small">
+            <label>Mês</label>
+            <input id="monthPicker" type="month" />
+          </div>
+          <div class="field grow">
+            <label>Novo suplemento</label>
+            <div class="row">
+              <input id="suppName" type="text" placeholder="Whey, Creatina, Pré-treino..." />
+              <button class="btn" id="btnAddSupp">Adicionar</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="card inner">
+          <div class="section-title">Seu calendário</div>
+          <div id="calendarGrid" class="calendar"></div>
+        </div>
+      </section>
+
+      <!-- FOTOS -->
+      <section class="card tab hidden" id="tab-photos">
+        <div class="tab-head">
+          <h2>Físico (Fotos)</h2>
+          <div class="muted">As fotos ficam salvas e protegidas (só abre logado).</div>
+        </div>
+
+        <div class="row wrap">
+          <div class="field">
+            <label>Data</label>
+            <input id="photoDay" type="date" />
+          </div>
+          <div class="field grow">
+            <label>Nota</label>
+            <input id="photoNote" type="text" placeholder="ex: pós cutting, pump, etc" />
+          </div>
+        </div>
+
+        <div class="row wrap">
+          <input id="photoFile" type="file" accept="image/*" />
+          <button class="btn" id="btnUploadPhoto">Salvar foto</button>
+          <span class="muted" id="photoMsg"></span>
+        </div>
+
+        <div class="photos">
+          <div class="card inner">
+            <div class="section-title">Antes → Depois</div>
+            <div class="compare">
+              <div class="compare-box">
+                <div class="muted">Primeira</div>
+                <img id="imgFirst" />
+              </div>
+              <div class="compare-box">
+                <div class="muted">Última</div>
+                <img id="imgLast" />
+              </div>
+            </div>
+          </div>
+
+          <div class="card inner">
+            <div class="section-title">Galeria</div>
+            <div id="photoGrid" class="photo-grid"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- TREINO -->
+      <section class="card tab hidden" id="tab-workout">
+        <div class="tab-head">
+          <h2>Meu Treino</h2>
+          <div class="muted">Montar treino visual (sem JSON).</div>
+        </div>
+
+        <div class="row wrap">
+          <div class="field grow">
+            <label>Título</label>
+            <input id="workTitle" type="text" placeholder="Ex: Hipertrofia 5x" />
+          </div>
+          <div class="field">
+            <label>Divisão</label>
+            <input id="workSplit" type="text" placeholder="Ex: PPL, ABCDE, Upper/Lower" />
+          </div>
+        </div>
+
+        <div class="card inner">
+          <div class="section-title">Adicionar exercício</div>
+
+          <div class="row wrap">
+            <div class="field">
+              <label>Dia</label>
+              <select id="dayKey">
+                <option>A</option><option>B</option><option>C</option><option>D</option><option>E</option>
+              </select>
+            </div>
+            <div class="field grow">
+              <label>Exercício</label>
+              <input id="exName" type="text" placeholder="Ex: Supino reto" />
+            </div>
+          </div>
+
+          <div class="row wrap">
+            <div class="field">
+              <label>Séries</label>
+              <input id="exSets" type="number" value="3" />
+            </div>
+            <div class="field">
+              <label>Reps</label>
+              <input id="exReps" type="text" value="8-12" />
+            </div>
+            <div class="field">
+              <label>Descanso (s)</label>
+              <input id="exRest" type="number" value="90" />
+            </div>
+            <button class="btn" id="btnAddExercise">Adicionar</button>
+          </div>
+
+          <div class="card inner" style="margin-top:12px">
+            <div class="section-title">Prévia</div>
+            <div id="builderPreview" class="list"></div>
+          </div>
+
+          <div class="row" style="margin-top:10px">
+            <button class="btn" id="btnSaveWorkout">Salvar treino</button>
+            <button class="btn ghost" id="btnClearWorkout">Limpar</button>
+            <span class="muted" id="workMsg"></span>
+          </div>
+        </div>
+
+        <div class="card inner">
+          <div class="section-title">Treinos salvos</div>
+          <div id="workoutList" class="list"></div>
+        </div>
+      </section>
+
+      <!-- STATS -->
+      <section class="card tab hidden" id="tab-stats">
+        <div class="tab-head">
+          <h2>Estatísticas Gerais</h2>
+          <div class="muted">Altura/peso/biotipo/objetivo → recomendação.</div>
+        </div>
+
+        <div class="grid2">
+          <div class="field">
+            <label>Altura (cm)</label>
+            <input id="heightCm" type="number" placeholder="180" />
+          </div>
+          <div class="field">
+            <label>Peso (kg)</label>
+            <input id="weightKg" type="number" placeholder="80" />
+          </div>
+          <div class="field">
+            <label>Biotipo</label>
+            <select id="biotype">
+              <option value="">—</option>
+              <option>Ectomorfo</option>
+              <option>Mesomorfo</option>
+              <option>Endomorfo</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>Objetivo</label>
+            <select id="goal">
+              <option value="">—</option>
+              <option>Hipertrofia</option>
+              <option>Emagrecer</option>
+              <option>Performance</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="row">
+          <button class="btn" id="btnSaveProfile">Gerar estatística</button>
+          <span class="muted" id="statsMsg"></span>
+        </div>
+
+        <div class="card inner">
+          <div class="section-title">Resultado</div>
+          <div id="statsOut" class="stats-out muted">Preencha e clique em “Gerar estatística”.</div>
+        </div>
+      </section>
+    </section>
+  </main>
+
+  <script src="./app.js"></script>
+</body>
+</html>
