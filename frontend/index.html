@@ -1,8 +1,8 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="pt-br">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Gym Tracker</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
@@ -10,18 +10,17 @@
 <body>
   <div class="bg"></div>
 
-  <header class="topbar">
-    <div class="brand">
-      <div class="logo">G</div>
-      <div class="brand-text">
-        <div class="brand-title">Gym Tracker</div>
-        <div class="brand-sub">check-ins • fotos • treino • stats</div>
-      </div>
-    </div>
-  </header>
-
-  <main class="layout">
+  <div class="shell">
+    <!-- SIDEBAR -->
     <aside class="sidebar">
+      <div class="brand">
+        <div class="logo">G</div>
+        <div class="brand-text">
+          <div class="brand-title">Gym Tracker</div>
+          <div class="brand-sub">check-ins • fotos • treino • stats</div>
+        </div>
+      </div>
+
       <nav class="nav">
         <button class="nav-btn active" data-view="dashboard">Dashboard</button>
         <button class="nav-btn" data-view="calendar">Calendário</button>
@@ -30,158 +29,251 @@
         <button class="nav-btn" data-view="stats">Estatísticas Gerais</button>
       </nav>
 
-      <div class="panel">
-        <div class="panel-title">Status</div>
-        <div class="panel-row">
+      <div class="card status-card">
+        <div class="card-title">Status</div>
+        <div class="status-row">
           <span>Conectado</span>
           <span id="statusDot" class="dot off"></span>
         </div>
-        <div class="panel-row">
+        <div class="status-row">
           <span>Mês</span>
           <span id="monthLabel" class="pill">—</span>
         </div>
+
+        <div class="divider"></div>
+
+        <button id="btnLogout" class="btn ghost">Sair</button>
       </div>
     </aside>
 
-    <section class="content">
-
-      <!-- AUTH (mostra quando não logado) -->
-      <section id="authView" class="card">
-        <h1 class="h1">Entrar</h1>
-        <p class="muted">Suas fotos e dados ficam salvos no servidor (não dependem do navegador).</p>
-
-        <div class="grid2">
-          <div>
-            <label class="label">Email</label>
-            <input id="email" class="input" type="email" placeholder="voce@exemplo.com" autocomplete="email" />
-          </div>
-          <div>
-            <label class="label">Senha</label>
-            <input id="password" class="input" type="password" placeholder="••••••••" autocomplete="current-password" />
-          </div>
+    <!-- MAIN -->
+    <main class="main">
+      <header class="topbar">
+        <div class="topbar-left">
+          <h1 id="viewTitle">Entrar</h1>
+          <p id="viewDesc" class="muted">Suas fotos e dados ficam salvos no servidor (não dependem do navegador).</p>
         </div>
+      </header>
 
-        <div class="actions">
-          <button id="btnLogin" class="btn primary" type="button">Login</button>
-          <button id="btnRegister" class="btn" type="button">Criar conta</button>
-          <span id="authMsg" class="auth-msg"></span>
+      <!-- AUTH VIEW -->
+      <section id="authView" class="view">
+        <div class="panel auth-panel">
+          <div class="panel-head">
+            <h2 class="panel-title">Entrar</h2>
+            <p class="muted">Crie uma conta ou faça login para acessar o painel.</p>
+          </div>
+
+          <div class="grid-2">
+            <div class="field">
+              <label>Email</label>
+              <input id="email" type="email" placeholder="voce@exemplo.com" autocomplete="email" />
+            </div>
+
+            <div class="field">
+              <label>Senha</label>
+              <input id="password" type="password" placeholder="••••••••" autocomplete="current-password" />
+            </div>
+          </div>
+
+          <div class="row">
+            <button id="btnLogin" type="button" class="btn primary">Login</button>
+            <button id="btnRegister" type="button" class="btn">Criar conta</button>
+            <div id="authMsg" class="auth-msg"></div>
+          </div>
+
+          <div class="note">
+            Dica: no Render grátis o backend pode “acordar” no primeiro acesso e demorar alguns segundos.
+          </div>
         </div>
       </section>
 
-      <!-- APP (mostra quando logado) -->
-      <section id="appView" class="hidden">
-        <section class="card">
-          <h1 class="h1" id="viewTitle">Dashboard</h1>
-          <p class="muted" id="viewDesc">Bem-vindo. Use o menu para navegar.</p>
-        </section>
+      <!-- APP VIEW -->
+      <section id="appView" class="view hidden">
 
-        <section class="card hidden" id="dashboardView">
-          <h2 class="h2">Resumo</h2>
-          <div class="kpis">
+        <!-- DASHBOARD -->
+        <section id="dashboardView" class="stack">
+          <div class="grid-3">
             <div class="kpi">
               <div class="kpi-title">Treinos no mês</div>
-              <div class="kpi-value" id="kpiWorkouts">—</div>
+              <div id="kpiWorkouts" class="kpi-value">0</div>
+              <div class="kpi-sub muted">Dias marcados como ✅</div>
             </div>
+
             <div class="kpi">
-              <div class="kpi-title">Dias com suplemento</div>
-              <div class="kpi-value" id="kpiSupp">—</div>
+              <div class="kpi-title">Suplementos tomados</div>
+              <div id="kpiSupp" class="kpi-value">0</div>
+              <div class="kpi-sub muted">Marcações ✅ no mês</div>
             </div>
+
             <div class="kpi">
-              <div class="kpi-title">Fotos enviadas</div>
-              <div class="kpi-value" id="kpiPhotos">—</div>
+              <div class="kpi-title">Fotos salvas</div>
+              <div id="kpiPhotos" class="kpi-value">0</div>
+              <div class="kpi-sub muted">Histórico de evolução</div>
+            </div>
+          </div>
+
+          <div class="panel">
+            <div class="panel-head">
+              <h2 class="panel-title">Resumo rápido</h2>
+              <p class="muted">Use o calendário para marcar treino e suplementos por dia.</p>
+            </div>
+
+            <div class="hint-grid">
+              <div class="hint">
+                <b>Calendário</b>
+                <p class="muted">Clique em um dia e marque treino ✅/❌ e suplementos.</p>
+              </div>
+              <div class="hint">
+                <b>Físico</b>
+                <p class="muted">Envie fotos e acompanhe sua evolução.</p>
+              </div>
+              <div class="hint">
+                <b>Estatísticas</b>
+                <p class="muted">Preencha altura/peso/biotipo e receba recomendações.</p>
+              </div>
             </div>
           </div>
         </section>
 
-        <section class="card hidden" id="calendarView">
-          <h2 class="h2">Calendário</h2>
-          <p class="muted">Marque treino e suplementos por dia.</p>
-          <div class="row">
-            <button class="btn" id="prevMonth">◀</button>
-            <div class="pill" id="calendarMonth">—</div>
-            <button class="btn" id="nextMonth">▶</button>
-            <div class="spacer"></div>
-            <button class="btn danger" id="btnLogout">Sair</button>
-          </div>
-
-          <div class="calendar" id="calendarGrid"></div>
-
-          <div class="card-inner">
-            <h3 class="h3">Suplementos</h3>
-            <div class="row">
-              <input id="suppName" class="input" placeholder="Ex: Whey / Creatina" />
-              <button id="btnAddSupp" class="btn primary">Adicionar</button>
+        <!-- CALENDAR -->
+        <section id="calendarView" class="stack hidden">
+          <div class="panel">
+            <div class="panel-head row-between">
+              <div>
+                <h2 class="panel-title">Calendário</h2>
+                <p class="muted">Clique em um dia para marcar treino e suplementos.</p>
+              </div>
+              <div class="row">
+                <button id="prevMonth" class="btn ghost" type="button">◀</button>
+                <span id="calendarMonth" class="pill big">—</span>
+                <button id="nextMonth" class="btn ghost" type="button">▶</button>
+              </div>
             </div>
-            <div id="suppList" class="chips"></div>
+
+            <div class="subpanel">
+              <div class="subpanel-head">
+                <div class="subpanel-title">Suplementos</div>
+                <div class="row">
+                  <input id="suppName" class="input-sm" placeholder="Ex: Whey, Creatina..." />
+                  <button id="btnAddSupp" class="btn primary" type="button">Adicionar</button>
+                </div>
+              </div>
+
+              <div id="suppList" class="chips"></div>
+            </div>
+
+            <div class="calendar">
+              <div class="dow">
+                <span>Dom</span><span>Seg</span><span>Ter</span><span>Qua</span><span>Qui</span><span>Sex</span><span>Sáb</span>
+              </div>
+              <div id="calendarGrid" class="grid"></div>
+            </div>
           </div>
         </section>
 
-        <section class="card hidden" id="photosView">
-          <h2 class="h2">Físico (Fotos)</h2>
-          <p class="muted">Envie fotos (frente/costas etc). Ficam salvas no servidor.</p>
+        <!-- PHOTOS -->
+        <section id="photosView" class="stack hidden">
+          <div class="panel">
+            <div class="panel-head">
+              <h2 class="panel-title">Físico (Fotos)</h2>
+              <p class="muted">Envie fotos do seu físico para acompanhar evolução.</p>
+            </div>
 
-          <div class="row">
-            <input id="photoFile" class="input" type="file" accept="image/*" />
-            <input id="photoNote" class="input" placeholder="Nota (opcional)" />
-            <button id="btnUploadPhoto" class="btn primary">Enviar</button>
+            <div class="subpanel">
+              <div class="grid-2">
+                <div class="field">
+                  <label>Foto</label>
+                  <input id="photoFile" type="file" accept="image/*" />
+                </div>
+                <div class="field">
+                  <label>Nota (opcional)</label>
+                  <input id="photoNote" placeholder="Ex: pós treino, 78kg, etc." />
+                </div>
+              </div>
+              <div class="row">
+                <button id="btnUploadPhoto" class="btn primary" type="button">Enviar foto</button>
+                <span class="muted">Se “fotos não disponíveis”, falta rota no backend.</span>
+              </div>
+            </div>
+
+            <div id="photoGrid" class="photo-grid"></div>
           </div>
-
-          <div id="photoGrid" class="photo-grid"></div>
         </section>
 
-        <section class="card hidden" id="workoutsView">
-          <h2 class="h2">Meu Treino</h2>
-          <p class="muted">Crie e salve seus treinos.</p>
+        <!-- WORKOUTS -->
+        <section id="workoutsView" class="stack hidden">
+          <div class="panel">
+            <div class="panel-head">
+              <h2 class="panel-title">Meu Treino</h2>
+              <p class="muted">Crie e salve seus treinos (pode ser texto mesmo).</p>
+            </div>
 
-          <div class="row">
-            <input id="workoutTitle" class="input" placeholder="Nome do treino (ex: Push A)" />
-            <button id="btnSaveWorkout" class="btn primary">Salvar</button>
+            <div class="subpanel">
+              <div class="grid-2">
+                <div class="field">
+                  <label>Nome do treino</label>
+                  <input id="workoutTitle" placeholder="Ex: ABC, Upper/Lower, Fullbody..." />
+                </div>
+                <div class="field">
+                  <label>Conteúdo</label>
+                  <textarea id="workoutText" rows="6" placeholder="Ex: Supino 4x8, Puxada 4x10..."></textarea>
+                </div>
+              </div>
+              <div class="row">
+                <button id="btnSaveWorkout" class="btn primary" type="button">Salvar treino</button>
+              </div>
+            </div>
+
+            <div id="workoutList" class="list"></div>
           </div>
-
-          <textarea id="workoutText" class="textarea" placeholder="Ex:
-Supino reto 4x8
-Desenvolvimento 4x10
-Tríceps testa 3x12"></textarea>
-
-          <div id="workoutList" class="list"></div>
         </section>
 
-        <section class="card hidden" id="statsView">
-          <h2 class="h2">Estatísticas Gerais</h2>
-          <p class="muted">Preencha e veja recomendações automáticas.</p>
-
-          <div class="grid3">
-            <div>
-              <label class="label">Altura (cm)</label>
-              <input id="height" class="input" type="number" placeholder="Ex: 187" />
+        <!-- STATS -->
+        <section id="statsView" class="stack hidden">
+          <div class="panel">
+            <div class="panel-head">
+              <h2 class="panel-title">Estatísticas Gerais</h2>
+              <p class="muted">Preencha seus dados para recomendações automáticas.</p>
             </div>
-            <div>
-              <label class="label">Peso (kg)</label>
-              <input id="weight" class="input" type="number" placeholder="Ex: 75" />
-            </div>
-            <div>
-              <label class="label">Biotipo</label>
-              <select id="biotype" class="input">
-                <option value="">—</option>
-                <option value="ectomorfo">Ectomorfo</option>
-                <option value="mesomorfo">Mesomorfo</option>
-                <option value="endomorfo">Endomorfo</option>
-              </select>
-            </div>
-          </div>
 
-          <div class="row">
-            <button id="btnSaveProfile" class="btn primary">Salvar</button>
-          </div>
+            <div class="subpanel">
+              <div class="grid-3">
+                <div class="field">
+                  <label>Altura (cm)</label>
+                  <input id="height" type="number" placeholder="Ex: 187" />
+                </div>
+                <div class="field">
+                  <label>Peso (kg)</label>
+                  <input id="weight" type="number" step="0.1" placeholder="Ex: 75.0" />
+                </div>
+                <div class="field">
+                  <label>Biotipo</label>
+                  <select id="biotype">
+                    <option value="">Selecione</option>
+                    <option value="ectomorfo">Ectomorfo</option>
+                    <option value="mesomorfo">Mesomorfo</option>
+                    <option value="endomorfo">Endomorfo</option>
+                  </select>
+                </div>
+              </div>
 
-          <div class="card-inner">
-            <h3 class="h3">Recomendação</h3>
-            <div id="recommendation" class="muted">Preencha seus dados para gerar recomendações.</div>
+              <div class="row">
+                <button id="btnSaveProfile" class="btn primary" type="button">Salvar</button>
+              </div>
+
+              <div class="divider"></div>
+
+              <div class="panel-soft">
+                <div class="panel-soft-title">Recomendação automática</div>
+                <div id="recommendation" class="muted">Preencha seus dados para gerar recomendações.</div>
+              </div>
+            </div>
           </div>
         </section>
+
       </section>
-    </section>
-  </main>
+    </main>
+  </div>
 
   <script src="app.js"></script>
 </body>
