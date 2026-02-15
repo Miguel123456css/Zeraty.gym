@@ -1,771 +1,836 @@
 /* ============================================================
-   Gym Tracker - frontend/app.js (FULL)
-   - Auth via x-www-form-urlencoded (FastAPI Form)
-   - Token persistence (localStorage)
-   - Calendar: workout + supplements per day
-   - Profile + recommendations
-   - Workouts CRUD-lite
-   - Photos (optional endpoints)
+   Gym Tracker - app.js (FULL / VERBOSE)
+   - Auth (register/login/logout) + token persist
+   - Navegação por views
+   - Calendário mensal (treino + suplementos por dia)
+   - Lista de suplementos
+   - Fotos do físico (upload + list)
+   - Treinos (salvar + listar + ver)
+   - Perfil/Estatísticas (altura/peso/biotipo + recomendação)
+   - UI status + sidebar show/hide (setStatus)
 ============================================================ */
 
-"use strict";
 
-/* -----------------------------
-   Config
------------------------------ */
+/* ============================================================
+   0) CONFIGURAÇÃO
+============================================================ */
 
-// Se quiser trocar API sem alterar código:
-// localStorage.setItem("API_BASE", "https://seu-backend.com/api")
-const DEFAULT_API_BASE = "https://zeraty-gym.onrender.com/api"; // Render (backend)
-const API = (localStorage.getItem("API_BASE") || DEFAULT_API_BASE).replace(/\/$/, "");
+const API_BASE = "https://zeraty-gym.onrender.com"; // backend (Render)
 
-/* -----------------------------
-   DOM helpers
------------------------------ */
+const STORAGE = {
+  token: "gymtracker_token",
+  month: "gymtracker_month_cursor", // YYYY-MM
+};
 
-const $ = (id) => document.getElementById(id);
-const $$ = (sel) => Array.from(document.querySelectorAll(sel));
+const UI = {
+  busyClass: "is-busy",
+};
 
-function setText(el, txt) {
-  if (!el) return;
-  el.textContent = String(txt ?? "");
+
+/* ============================================================
+   1) HELPERS DE DOM / UTIL
+============================================================ */
+
+// helper de getElementById
+function $(id) {
+  return document.getElementById(id);
 }
 
-function setHTML(el, html) {
-  if (!el) return;
-  el.innerHTML = html ?? "";
+// helper para querySelector
+function qs(sel, root = document) {
+  return root.querySelector(sel);
 }
 
-function show(el) {
-  if (!el) return;
-  el.classList.remove("hidden");
+// helper para querySelectorAll
+function qsa(sel, root = document) {
+  return Array.from(root.querySelectorAll(sel));
 }
 
-function hide(el) {
-  if (!el) return;
-  el.classList.add("hidden");
+// cria elemento
+function el(tag, className = "", text = "") {
+  const e = document.createElement(tag);
+  if (className) e.className = className;
+  if (text !== undefined && text !== null && text !== "") e.textContent = text;
+  return e;
 }
 
-function clamp(n, min, max) {
-  return Math.max(min, Math.min(max, n));
+// limpa elemento
+function clear(node) {
+  if (!node) return;
+  while (node.firstChild) node.removeChild(node.firstChild);
 }
 
-function fmtMonthLabel(y, m) {
-  const d = new Date(y, m, 1);
-  return d.toLocaleDateString("pt-BR", { month: "long", year: "numeric" });
-}
-
+// formatar data YYYY-MM-DD
 function pad2(n) {
   return String(n).padStart(2, "0");
 }
-
-function ymd(y, m, d) {
-  // m: 0-based
-  return `${y}-${pad2(m + 1)}-${pad2(d)}`;
+function ymd(date) {
+  const y = date.getFullYear();
+  const m = pad2(date.getMonth() + 1);
+  const d = pad2(date.getDate());
+  return `${y}-${m}-${d}`;
 }
 
-function todayYMD() {
-  const t = new Date();
-  return ymd(t.getFullYear(), t.getMonth(), t.getDate());
+// mês cursor YYYY-MM
+function ym(date) {
+  const y = date.getFullYear();
+  const m = pad2(date.getMonth() + 1);
+  return `${y}-${m}`;
 }
 
-/* -----------------------------
-   Token storage
------------------------------ */
-
-const TOKEN_KEY = "GYM_TOKEN";
-
-function getToken() {
-  return localStorage.getItem(TOKEN_KEY) || "";
-}
-function setToken(tok) {
-  localStorage.setItem(TOKEN_KEY, tok);
-}
-function clearToken() {
-  localStorage.removeItem(TOKEN_KEY);
+// parse YYYY-MM
+function parseYM(str) {
+  const [y, m] = (str || "").split("-").map(Number);
+  if (!y || !m) return null;
+  return new Date(y, m - 1, 1);
 }
 
-/* -----------------------------
-   Messaging
------------------------------ */
-
-let authBusy = false;
-
-function safeDetail(data) {
-  // Tenta extrair erro do FastAPI
-  if (!data) return "";
-  if (typeof data === "string") return data;
-  if (data.detail) {
-    if (typeof data.detail === "string") return data.detail;
-    // detail pode ser lista de erros
-    if (Array.isArray(data.detail)) {
-      // Formato Pydantic: [{loc:[...], msg:"...", type:"..."}]
-      const msgs = data.detail.map((e) => e?.msg).filter(Boolean);
-      if (msgs.length) return msgs.join(" | ");
-      return JSON.stringify(data.detail);
-    }
-    return JSON.stringify(data.detail);
-  }
-  // qualquer outro objeto
-  try { return JSON.stringify(data); } catch { return String(data); }
-}
-
-function setAuthMsg(msg, ok = false) {
-  const el = $("authMsg");
-  if (!el) return;
-  el.textContent = msg || "";
-  el.classList.toggle("ok", !!ok);
-  el.classList.toggle("err", !ok && !!msg);
-}
-
-function setAuthBusy(isBusy) {
-  const b1 = $("btnLogin");
-  const b2 = $("btnRegister");
-  if (b1) b1.disabled = isBusy;
-  if (b2) b2.disabled = isBusy;
-}
-
-/* -----------------------------
-   HTTP helpers
------------------------------ */
-
-async function apiFetch(path, opts = {}) {
-  const { method = "GET", token = "", json = null, headers = {}, body = null } = opts;
-  const h = { ...headers };
-  if (token) h["Authorization"] = `Bearer ${token}`;
-
-  let finalBody = body;
-  if (json !== null) {
-    h["Content-Type"] = "application/json";
-    finalBody = JSON.stringify(json);
-  }
-
-  const res = await fetch(`${API}${path}`, { method, headers: h, body: finalBody });
-  let data = null;
-  try { data = await res.json(); } catch { data = null; }
-  return { ok: res.ok, status: res.status, data };
-}
-
-async function apiPostForm(path, fields, token = "") {
-  const h = {};
-  if (token) h["Authorization"] = `Bearer ${token}`;
-  h["Content-Type"] = "application/x-www-form-urlencoded";
-
-  const body = new URLSearchParams();
-  Object.entries(fields || {}).forEach(([k, v]) => body.append(k, v ?? ""));
-
-  const res = await fetch(`${API}${path}`, { method: "POST", headers: h, body });
-  let data = null;
-  try { data = await res.json(); } catch { data = null; }
-  return { ok: res.ok, status: res.status, data };
-}
-
-async function apiPostFormData(path, formData, token = "") {
-  const h = {};
-  if (token) h["Authorization"] = `Bearer ${token}`;
-
-  const res = await fetch(`${API}${path}`, { method: "POST", headers: h, body: formData });
-  let data = null;
-  try { data = await res.json(); } catch { data = null; }
-  return { ok: res.ok, status: res.status, data };
-}
-
-/* -----------------------------
-   App state
------------------------------ */
-
-let TOKEN = getToken();
-let ME = null;
-
-let state = {
-  monthY: new Date().getFullYear(),
-  monthM: new Date().getMonth(), // 0-based
-  supplements: [], // [{id, name}]
-  // checkins by ymd:
-  // { "2026-02-14": { trained: true/false/null, supp: { [suppId]: true/false/null } } }
-  monthCheckins: {},
-  workouts: [], // list
-  photos: [],   // list
-  profile: null // {height_cm, weight_kg, biotype}
-};
-
-/* -----------------------------
-   Views / Navigation
------------------------------ */
-
-const VIEW_MAP = {
-  dashboard: "dashboardView",
-  calendar: "calendarView",
-  photos: "photosView",
-  workouts: "workoutsView",
-  stats: "statsView"
-};
-
-function setTopbar(title, desc) {
-  setText($("viewTitle"), title);
-  setText($("viewDesc"), desc);
-}
-
-function setActiveNav(key) {
-  $$(".nav-btn").forEach((b) => {
-    const active = b.dataset.view === key;
-    b.classList.toggle("active", active);
-  });
-}
-
-function openAppView(key) {
-  // only works if logged
-  if (!$("appView") || $("appView").classList.contains("hidden")) return;
-
-  setActiveNav(key);
-
-  Object.entries(VIEW_MAP).forEach(([k, secId]) => {
-    const sec = $(secId);
-    if (!sec) return;
-    if (k === key) show(sec);
-    else hide(sec);
-  });
-
-  if (key === "dashboard") {
-    setTopbar("Dashboard", "Resumo do mês e atalhos.");
-    renderKPIs();
-  } else if (key === "calendar") {
-    setTopbar("Calendário", "Marque treino e suplementos dia a dia.");
-    renderCalendar();
-  } else if (key === "photos") {
-    setTopbar("Físico (Fotos)", "Envie fotos e acompanhe evolução.");
-    renderPhotos();
-  } else if (key === "workouts") {
-    setTopbar("Meu Treino", "Crie e salve seu treino.");
-    renderWorkouts();
-  } else if (key === "stats") {
-    setTopbar("Estatísticas Gerais", "Preencha seus dados e receba recomendações.");
-    renderProfile();
+// texto do mês pt-BR
+function monthLabelPt(date) {
+  try {
+    return date.toLocaleDateString("pt-BR", { month: "long", year: "numeric" });
+  } catch {
+    return `${date.getMonth() + 1}/${date.getFullYear()}`;
   }
 }
 
-/* -----------------------------
-   Auth
------------------------------ */
+// debounce simples
+function debounce(fn, ms = 250) {
+  let t = null;
+  return (...args) => {
+    clearTimeout(t);
+    t = setTimeout(() => fn(...args), ms);
+  };
+}
 
-async function doLogin() {
-  if (authBusy) return;
-  authBusy = true;
-  setAuthBusy(true);
-  setAuthMsg("");
+// trava de clique (previne double request)
+function onceBusy(btn, promiseFn) {
+  if (!btn) return promiseFn();
+  if (btn.dataset.busy === "1") return; // ignore
+  btn.dataset.busy = "1";
+  btn.disabled = true;
 
-  const email = ($("email")?.value || "").trim();
-  const password = $("password")?.value || "";
-
-  if (!email || !password) {
-    setAuthMsg("Preencha email e senha.");
-    authBusy = false;
-    setAuthBusy(false);
-    return;
-  }
+  const end = () => {
+    btn.dataset.busy = "0";
+    btn.disabled = false;
+  };
 
   try {
-    const log = await apiPostForm("/login", { email, password });
-
-    if (!log.ok) {
-      setAuthMsg(safeDetail(log.data) || "Login inválido.");
-      return;
-    }
-    if (!log.data?.token) {
-      setAuthMsg("Servidor não retornou token.");
-      return;
-    }
-
-    TOKEN = log.data.token;
-    setToken(TOKEN);
-
-    const me = await apiFetch("/me", { token: TOKEN });
-    if (!me.ok) {
-      clearToken();
-      TOKEN = "";
-      setAuthMsg("Sessão falhou. Tente novamente.");
-      return;
-    }
-
-    ME = me.data || null;
-    setAuthMsg("Logado ✅", true);
-    await bootApp();
+    const p = promiseFn();
+    Promise.resolve(p).finally(end);
+    return p;
   } catch (e) {
-    setAuthMsg("Erro ao conectar na API.");
-  } finally {
-    authBusy = false;
-    setAuthBusy(false);
+    end();
+    throw e;
   }
 }
 
-async function doRegister() {
-  if (authBusy) return;
-  authBusy = true;
-  setAuthBusy(true);
-  setAuthMsg("");
-
-  const email = ($("email")?.value || "").trim();
-  const password = $("password")?.value || "";
-
-  if (!email || !password) {
-    setAuthMsg("Preencha email e senha.");
-    authBusy = false;
-    setAuthBusy(false);
-    return;
-  }
-
-  try {
-    const r = await apiPostForm("/register", { email, password });
-    if (!r.ok) {
-      setAuthMsg(safeDetail(r.data) || "Falha ao criar conta.");
-      return;
-    }
-
-    // auto login
-    const log = await apiPostForm("/login", { email, password });
-    if (!log.ok || !log.data?.token) {
-      setAuthMsg(safeDetail(log.data) || "Conta criada, mas falhou ao logar.");
-      return;
-    }
-
-    TOKEN = log.data.token;
-    setToken(TOKEN);
-
-    const me = await apiFetch("/me", { token: TOKEN });
-    if (!me.ok) {
-      clearToken();
-      TOKEN = "";
-      setAuthMsg("Conta criada, mas sessão falhou. Tente login.");
-      return;
-    }
-
-    ME = me.data || null;
-    setAuthMsg("Conta criada e logada ✅", true);
-    await bootApp();
-  } catch (e) {
-    setAuthMsg("Erro ao conectar na API.");
-  } finally {
-    authBusy = false;
-    setAuthBusy(false);
+// toast simples (usa #authMsg se existir, senão console)
+function showMsg(text, type = "info") {
+  const msg = $("authMsg") || $("msg");
+  if (msg) {
+    msg.textContent = text || "";
+    msg.classList.remove("ok", "err");
+    if (type === "ok") msg.classList.add("ok");
+    if (type === "err") msg.classList.add("err");
+  } else {
+    if (type === "err") console.error(text);
+    else console.log(text);
   }
 }
 
-function doLogout() {
-  clearToken();
-  TOKEN = "";
-  ME = null;
 
-  // reset UI
-  show($("authView"));
-  hide($("appView"));
-  setTopbar("Entrar", "Suas fotos e dados ficam salvos no servidor (não dependem do navegador).");
-  setAuthMsg("");
-  setStatus(false);
-
-  // clear sensitive state
-  state.monthCheckins = {};
-  state.supplements = [];
-  state.workouts = [];
-  state.photos = [];
-  state.profile = null;
-}
-
-/* -----------------------------
-   Status UI
------------------------------ */
+/* ============================================================
+   2) STATUS UI (SUA FUNÇÃO, DO JEITO QUE VOCÊ MANDOU)
+============================================================ */
 
 function setStatus(on) {
   const dot = $("statusDot");
+  const pill = $("statusPill");
+  const txt = $("statusText");
+
   if (dot) {
     dot.classList.toggle("on", !!on);
     dot.classList.toggle("off", !on);
   }
+  if (txt) txt.textContent = on ? "Conectado" : "Desconectado";
+
+  // sidebar aparece só quando logado
+  const sb = $("sidebar");
+  if (sb) {
+    if (on) sb.classList.remove("hidden");
+    else sb.classList.add("hidden");
+  }
 }
 
-/* -----------------------------
-   Boot + initial load
------------------------------ */
 
-async function bootApp() {
-  // show app
-  hide($("authView"));
-  show($("appView"));
+/* ============================================================
+   3) TOKEN / AUTH STORAGE
+============================================================ */
+
+function getToken() {
+  return localStorage.getItem(STORAGE.token) || "";
+}
+
+function setToken(token) {
+  if (token) localStorage.setItem(STORAGE.token, token);
+  else localStorage.removeItem(STORAGE.token);
+}
+
+function isLogged() {
+  return !!getToken();
+}
+
+
+/* ============================================================
+   4) FETCH WRAPPER (API)
+============================================================ */
+
+async function apiFetch(path, opts = {}) {
+  const url = API_BASE + path;
+
+  const headers = Object.assign(
+    { "Content-Type": "application/json" },
+    opts.headers || {}
+  );
+
+  const token = getToken();
+  if (token) headers.Authorization = `Bearer ${token}`;
+
+  const config = Object.assign({}, opts, { headers });
+
+  const res = await fetch(url, config);
+
+  // tenta ler json, se falhar, lê texto
+  let data = null;
+  const ct = res.headers.get("content-type") || "";
+  if (ct.includes("application/json")) {
+    data = await res.json().catch(() => null);
+  } else {
+    const t = await res.text().catch(() => "");
+    data = t ? { detail: t } : null;
+  }
+
+  if (!res.ok) {
+    // padroniza erro
+    const msg =
+      (data && (data.detail || data.message)) ||
+      `Erro HTTP ${res.status}`;
+    const err = new Error(msg);
+    err.status = res.status;
+    err.data = data;
+    throw err;
+  }
+
+  return data;
+}
+
+async function apiGet(path) {
+  return apiFetch(path, { method: "GET" });
+}
+
+async function apiPost(path, body) {
+  return apiFetch(path, { method: "POST", body: JSON.stringify(body || {}) });
+}
+
+// upload multipart (fotos)
+async function apiUpload(path, formData) {
+  const url = API_BASE + path;
+
+  const headers = {};
+  const token = getToken();
+  if (token) headers.Authorization = `Bearer ${token}`;
+
+  const res = await fetch(url, {
+    method: "POST",
+    headers,
+    body: formData,
+  });
+
+  let data = null;
+  const ct = res.headers.get("content-type") || "";
+  if (ct.includes("application/json")) data = await res.json().catch(() => null);
+  else data = { detail: await res.text().catch(() => "") };
+
+  if (!res.ok) {
+    const msg =
+      (data && (data.detail || data.message)) ||
+      `Erro HTTP ${res.status}`;
+    const err = new Error(msg);
+    err.status = res.status;
+    err.data = data;
+    throw err;
+  }
+
+  return data;
+}
+
+
+/* ============================================================
+   5) ESTADO GLOBAL DO APP
+============================================================ */
+
+const state = {
+  me: null,
+
+  // mês atual (Date do primeiro dia)
+  monthCursor: null,
+
+  // suplementos cadastrados (array de {id, name})
+  supplements: [],
+
+  // checkins do mês (map date-> { trained: bool, supp: {suppId: bool} })
+  checkins: {},
+
+  // treinos do usuário
+  workouts: [],
+
+  // fotos
+  photos: [],
+
+  // view atual
+  view: "dashboard",
+};
+
+
+/* ============================================================
+   6) VIEW / NAVEGAÇÃO
+============================================================ */
+
+function setView(viewName) {
+  state.view = viewName;
+
+  // ativa botão
+  qsa(".nav-btn").forEach((b) => {
+    b.classList.toggle("active", b.dataset.view === viewName);
+  });
+
+  // views
+  const map = {
+    dashboard: "dashboardView",
+    calendar: "calendarView",
+    photos: "photosView",
+    workouts: "workoutsView",
+    stats: "statsView",
+  };
+
+  Object.values(map).forEach((id) => {
+    const node = $(id);
+    if (node) node.classList.add("hidden");
+  });
+
+  const toShow = map[viewName];
+  if (toShow && $(toShow)) $(toShow).classList.remove("hidden");
+
+  // títulos
+  const title = $("viewTitle");
+  const desc = $("viewDesc");
+
+  if (title && desc) {
+    if (viewName === "dashboard") {
+      title.textContent = "Dashboard";
+      desc.textContent = "Resumo do mês e atalhos.";
+    } else if (viewName === "calendar") {
+      title.textContent = "Calendário";
+      desc.textContent = "Marque treinos e suplementos por dia.";
+    } else if (viewName === "photos") {
+      title.textContent = "Físico (Fotos)";
+      desc.textContent = "Envie fotos e acompanhe sua evolução.";
+    } else if (viewName === "workouts") {
+      title.textContent = "Meu Treino";
+      desc.textContent = "Crie e salve seus treinos.";
+    } else if (viewName === "stats") {
+      title.textContent = "Estatísticas Gerais";
+      desc.textContent = "Altura, peso, biotipo e recomendação automática.";
+    }
+  }
+
+  // renderizações específicas
+  if (viewName === "calendar") renderCalendar();
+  if (viewName === "dashboard") renderDashboard();
+  if (viewName === "photos") renderPhotos();
+  if (viewName === "workouts") renderWorkouts();
+  if (viewName === "stats") renderRecommendation();
+}
+
+function bindNavButtons() {
+  qsa(".nav-btn").forEach((btn) => {
+    btn.addEventListener("click", () => setView(btn.dataset.view));
+  });
+}
+
+
+/* ============================================================
+   7) AUTH (REGISTER / LOGIN / LOGOUT)
+============================================================ */
+
+async function doRegister() {
+  const email = ($("email")?.value || "").trim();
+  const password = ($("password")?.value || "").trim();
+
+  if (!email || !password) {
+    showMsg("Preencha email e senha.", "err");
+    return;
+  }
+
+  // backend espera JSON: {email, password}
+  try {
+    showMsg("Criando conta...", "info");
+    await apiPost("/api/register", { email, password });
+    showMsg("Conta criada! Agora faça login.", "ok");
+  } catch (e) {
+    showMsg(e.message || "Erro ao criar conta.", "err");
+  }
+}
+
+async function doLogin() {
+  const email = ($("email")?.value || "").trim();
+  const password = ($("password")?.value || "").trim();
+
+  if (!email || !password) {
+    showMsg("Preencha email e senha.", "err");
+    return;
+  }
+
+  try {
+    showMsg("Entrando...", "info");
+    const data = await apiPost("/api/login", { email, password });
+
+    // padrão: {access_token: "..."}
+    const token = data?.access_token || data?.token;
+    if (!token) {
+      showMsg("Login retornou sem token. Verifique o backend.", "err");
+      return;
+    }
+
+    setToken(token);
+    showMsg("Logado com sucesso!", "ok");
+
+    await bootstrapAfterLogin();
+  } catch (e) {
+    showMsg(e.message || "Login inválido.", "err");
+    setStatus(false);
+    showAuthOnly();
+  }
+}
+
+function doLogout() {
+  setToken("");
+  state.me = null;
+  state.supplements = [];
+  state.checkins = {};
+  state.workouts = [];
+  state.photos = [];
+  setStatus(false);
+  showAuthOnly();
+  showMsg("Você saiu.", "info");
+}
+
+async function apiMe() {
+  return apiGet("/api/me");
+}
+
+
+/* ============================================================
+   8) UI: MOSTRAR AUTH VS APP
+============================================================ */
+
+function showAuthOnly() {
+  const auth = $("authView");
+  const app = $("appView");
+  if (auth) auth.classList.remove("hidden");
+  if (app) app.classList.add("hidden");
+  setStatus(false);
+}
+
+function showAppOnly() {
+  const auth = $("authView");
+  const app = $("appView");
+  if (auth) auth.classList.add("hidden");
+  if (app) app.classList.remove("hidden");
   setStatus(true);
+}
 
-  // month label sidebar
-  setText($("monthLabel"), fmtMonthLabel(state.monthY, state.monthM));
-  setText($("calendarMonth"), fmtMonthLabel(state.monthY, state.monthM));
 
-  // load data
+/* ============================================================
+   9) BOOTSTRAP APÓS LOGIN
+============================================================ */
+
+async function bootstrapAfterLogin() {
+  // valida token
+  state.me = await apiMe();
+
+  // define mês
+  initMonthCursor();
+
+  // carrega tudo necessário
   await Promise.all([
     loadSupplements(),
     loadMonthCheckins(),
     loadWorkouts(),
+    loadPhotos(),
     loadProfile(),
-    loadPhotos()
   ]);
 
-  // render initial view
-  openAppView("dashboard");
+  // render
+  showAppOnly();
+  updateMonthLabels();
+  setView(state.view || "dashboard");
 }
 
-/* -----------------------------
-   Data loaders
------------------------------ */
 
-async function loadSupplements() {
-  const r = await apiFetch("/supplements", { token: TOKEN });
-  if (r.ok && Array.isArray(r.data)) {
-    state.supplements = r.data;
-  } else {
-    state.supplements = [];
-  }
-  renderSuppsChips();
-}
+/* ============================================================
+   10) MÊS (cursor) + botões prev/next
+============================================================ */
 
-async function loadMonthCheckins() {
-  // expects /api/checkins?year=YYYY&month=MM (1-12) or similar
-  // We'll try common patterns: ?year=&month=
-  const year = state.monthY;
-  const month = state.monthM + 1;
-
-  let r = await apiFetch(`/checkins?year=${year}&month=${month}`, { token: TOKEN });
-
-  // fallback: /checkins/{year}/{month}
-  if (!r.ok) {
-    r = await apiFetch(`/checkins/${year}/${month}`, { token: TOKEN });
-  }
-
-  if (r.ok && r.data && typeof r.data === "object") {
-    // assume it returns dict-like {date: {trained:bool|null, supp:{id:bool|null}}}
-    state.monthCheckins = r.data;
-  } else {
-    state.monthCheckins = {};
-  }
-
-  renderCalendar();
-  renderKPIs();
-}
-
-async function loadWorkouts() {
-  const r = await apiFetch("/workouts", { token: TOKEN });
-  if (r.ok && Array.isArray(r.data)) state.workouts = r.data;
-  else state.workouts = [];
-  renderWorkouts();
-}
-
-async function loadProfile() {
-  const r = await apiFetch("/profile", { token: TOKEN });
-  if (r.ok && r.data) state.profile = r.data;
-  else state.profile = null;
-  renderProfile();
-}
-
-async function loadPhotos() {
-  // optional endpoints
-  let r = await apiFetch("/photos", { token: TOKEN });
-  if (!r.ok) {
-    // fallback maybe /physique/photos
-    r = await apiFetch("/physique/photos", { token: TOKEN });
-  }
-  if (r.ok && Array.isArray(r.data)) state.photos = r.data;
-  else state.photos = [];
-  renderPhotos();
-  renderKPIs();
-}
-
-/* -----------------------------
-   Calendar rendering
------------------------------ */
-
-function ensureDay(dateStr) {
-  if (!state.monthCheckins[dateStr]) {
-    state.monthCheckins[dateStr] = { trained: null, supp: {} };
-  }
-  if (!state.monthCheckins[dateStr].supp) state.monthCheckins[dateStr].supp = {};
-  return state.monthCheckins[dateStr];
-}
-
-function daysInMonth(y, m0) {
-  return new Date(y, m0 + 1, 0).getDate();
-}
-
-function firstDow(y, m0) {
-  // 0=Sun..6=Sat
-  return new Date(y, m0, 1).getDay();
-}
-
-function renderCalendar() {
-  setText($("calendarMonth"), fmtMonthLabel(state.monthY, state.monthM));
-  setText($("monthLabel"), fmtMonthLabel(state.monthY, state.monthM));
-
-  const grid = $("calendarGrid");
-  if (!grid) return;
-
-  const y = state.monthY;
-  const m = state.monthM;
-  const totalDays = daysInMonth(y, m);
-  const start = firstDow(y, m);
-
-  // clear
-  grid.innerHTML = "";
-
-  // empty leading cells
-  for (let i = 0; i < start; i++) {
-    const cell = document.createElement("div");
-    cell.className = "day empty";
-    grid.appendChild(cell);
-  }
-
-  // day cells
-  for (let d = 1; d <= totalDays; d++) {
-    const dateStr = ymd(y, m, d);
-    const info = ensureDay(dateStr);
-
-    const cell = document.createElement("button");
-    cell.type = "button";
-    cell.className = "day";
-    if (dateStr === todayYMD()) cell.classList.add("today");
-
-    const trained = info.trained;
-    const trainedMark = trained === true ? "✅" : trained === false ? "❌" : "—";
-
-    // count supplement marks for quick badge
-    const suppVals = info.supp || {};
-    let suppYes = 0, suppNo = 0;
-    Object.values(suppVals).forEach((v) => {
-      if (v === true) suppYes++;
-      else if (v === false) suppNo++;
-    });
-
-    cell.innerHTML = `
-      <div class="day-top">
-        <span class="day-num">${d}</span>
-        <span class="day-badge">${trainedMark}</span>
-      </div>
-      <div class="day-bottom muted">
-        <span>Sup: ✅${suppYes} ❌${suppNo}</span>
-      </div>
-    `;
-
-    cell.addEventListener("click", () => openDayModal(dateStr));
-    grid.appendChild(cell);
-  }
-}
-
-function openDayModal(dateStr) {
-  // Modal simples via prompt/confirm, sem depender de CSS/modal pronto
-  // (Mais tarde dá pra trocar por modal bonito.)
-  const info = ensureDay(dateStr);
-
-  // workout
-  const currentTrained = info.trained;
-  let trainedLabel = currentTrained === true ? "✅ Sim" : currentTrained === false ? "❌ Não" : "— Não marcado";
-
-  const trainedChoice = prompt(
-    `Dia: ${dateStr}\nTreinou? (digite: 1=✅, 0=❌, enter=manter)\nAtual: ${trainedLabel}`,
-    ""
-  );
-  if (trainedChoice === "1") info.trained = true;
-  else if (trainedChoice === "0") info.trained = false;
-
-  // supplements
-  if (state.supplements.length) {
-    const lines = state.supplements.map((s, idx) => {
-      const v = info.supp?.[s.id];
-      const mark = v === true ? "✅" : v === false ? "❌" : "—";
-      return `${idx + 1}. ${s.name} = ${mark}`;
-    }).join("\n");
-
-    const suppChoice = prompt(
-      `Suplementos (${dateStr})\nEscolha: "n=✅", "n-=❌", "n0=limpar" (ex: 2=✅, 2-=❌)\n\n${lines}\n\nDigite uma opção (ou enter p/ pular):`,
-      ""
-    );
-
-    if (suppChoice) {
-      // parse like: "2", "2-", "20"
-      const m = String(suppChoice).match(/^(\d+)(-?|0)$/);
-      if (m) {
-        const idx = parseInt(m[1], 10) - 1;
-        const op = m[2];
-        const s = state.supplements[idx];
-        if (s) {
-          if (!info.supp) info.supp = {};
-          if (op === "-") info.supp[s.id] = false;
-          else if (op === "0") delete info.supp[s.id];
-          else info.supp[s.id] = true;
-        }
-      }
-    }
-  } else {
-    alert("Você ainda não adicionou suplementos. Vá em Calendário → Suplementos.");
-  }
-
-  // persist to backend
-  persistDay(dateStr).finally(() => {
-    renderCalendar();
-    renderKPIs();
-  });
-}
-
-async function persistDay(dateStr) {
-  const info = ensureDay(dateStr);
-
-  // 1) workout checkin
-  // endpoint: POST /api/checkin {date, trained} (json) OR Form? We'll send JSON.
-  await apiFetch("/checkin", {
-    method: "POST",
-    token: TOKEN,
-    json: { date: dateStr, trained: info.trained }
-  });
-
-  // 2) supplement checkins: POST /api/supp_checkin {date, supp_id, took}
-  const suppObj = info.supp || {};
-  const tasks = Object.entries(suppObj).map(([suppId, took]) => {
-    return apiFetch("/supp_checkin", {
-      method: "POST",
-      token: TOKEN,
-      json: { date: dateStr, supplement_id: suppId, took }
-    });
-  });
-  await Promise.all(tasks);
-
-  // refresh month from server (keeps consistent)
-  await loadMonthCheckins();
-}
-
-/* -----------------------------
-   Supplements UI + actions
------------------------------ */
-
-function renderSuppsChips() {
-  const wrap = $("suppList");
-  if (!wrap) return;
-
-  if (!state.supplements.length) {
-    wrap.innerHTML = `<div class="muted">Nenhum suplemento ainda. Adicione acima.</div>`;
+function initMonthCursor() {
+  // tenta recuperar do storage
+  const saved = localStorage.getItem(STORAGE.month);
+  const parsed = parseYM(saved);
+  if (parsed) {
+    state.monthCursor = parsed;
     return;
   }
 
-  wrap.innerHTML = "";
-  state.supplements.forEach((s) => {
-    const chip = document.createElement("div");
-    chip.className = "chip";
-    chip.innerHTML = `
-      <span class="chip-name">${escapeHTML(s.name)}</span>
-      <button type="button" class="chip-x" title="Remover">✕</button>
-    `;
-    chip.querySelector(".chip-x").addEventListener("click", () => removeSupplement(s.id));
-    wrap.appendChild(chip);
+  // default: mês atual
+  const now = new Date();
+  state.monthCursor = new Date(now.getFullYear(), now.getMonth(), 1);
+}
+
+function saveMonthCursor() {
+  if (!state.monthCursor) return;
+  localStorage.setItem(STORAGE.month, ym(state.monthCursor));
+}
+
+function moveMonth(delta) {
+  if (!state.monthCursor) initMonthCursor();
+  const d = new Date(state.monthCursor);
+  d.setMonth(d.getMonth() + delta);
+  d.setDate(1);
+  state.monthCursor = d;
+  saveMonthCursor();
+  updateMonthLabels();
+  // recarrega checkins do mês
+  loadMonthCheckins().then(() => {
+    renderCalendar();
+    renderDashboard();
   });
+}
+
+function updateMonthLabels() {
+  const label = $("calendarMonth");
+  const label2 = $("monthLabel");
+  const text = monthLabelPt(state.monthCursor || new Date());
+
+  if (label) label.textContent = text;
+  if (label2) label2.textContent = text;
+}
+
+
+/* ============================================================
+   11) SUPLEMENTOS
+============================================================ */
+
+async function loadSupplements() {
+  try {
+    const list = await apiGet("/api/supplements");
+    state.supplements = Array.isArray(list) ? list : (list?.items || []);
+  } catch (e) {
+    // se der erro, não derruba o app
+    console.warn("loadSupplements error:", e);
+    state.supplements = [];
+  }
+  renderSuppList();
 }
 
 async function addSupplement() {
   const name = ($("suppName")?.value || "").trim();
-  if (!name) return;
-
-  const r = await apiFetch("/supplements/add", {
-    method: "POST",
-    token: TOKEN,
-    json: { name }
-  });
-
-  if (!r.ok) {
-    alert(safeDetail(r.data) || "Falha ao adicionar suplemento.");
+  if (!name) {
+    showMsg("Digite um nome de suplemento.", "err");
     return;
   }
 
-  $("suppName").value = "";
-  await loadSupplements();
-  await loadMonthCheckins();
+  try {
+    await apiPost("/api/supplements/add", { name });
+    $("suppName").value = "";
+    await loadSupplements();
+    await loadMonthCheckins();
+    renderCalendar();
+    renderDashboard();
+    showMsg("Suplemento adicionado.", "ok");
+  } catch (e) {
+    showMsg(e.message || "Erro ao adicionar suplemento.", "err");
+  }
 }
 
-async function removeSupplement(suppId) {
-  // Nem sempre existe endpoint delete; então só tenta alguns padrões
-  let r = await apiFetch(`/supplements/${encodeURIComponent(suppId)}`, {
-    method: "DELETE",
-    token: TOKEN
+async function removeSupplement(id) {
+  // se seu backend não tiver delete, a gente só desabilita no front
+  // (mas vou tentar um endpoint comum)
+  try {
+    await apiPost("/api/supplements/remove", { id });
+    await loadSupplements();
+    await loadMonthCheckins();
+    renderCalendar();
+    renderDashboard();
+  } catch (e) {
+    // fallback: remove só do front
+    state.supplements = state.supplements.filter((s) => s.id !== id);
+    renderSuppList();
+    showMsg("Seu backend não tem /remove (removi só do front).", "err");
+  }
+}
+
+function renderSuppList() {
+  const wrap = $("suppList");
+  if (!wrap) return;
+
+  clear(wrap);
+
+  if (!state.supplements.length) {
+    wrap.appendChild(el("div", "muted", "Nenhum suplemento cadastrado ainda."));
+    return;
+  }
+
+  state.supplements.forEach((s) => {
+    const chip = el("div", "chip");
+    const name = el("span", "", s.name || s.title || "Suplemento");
+    const x = el("button", "chip-x", "×");
+    x.title = "Remover (se o backend suportar)";
+    x.addEventListener("click", () => removeSupplement(s.id));
+
+    chip.appendChild(name);
+    chip.appendChild(x);
+    wrap.appendChild(chip);
   });
-  if (!r.ok) {
-    // fallback: /supplements/remove
-    r = await apiFetch(`/supplements/remove`, {
-      method: "POST",
-      token: TOKEN,
-      json: { id: suppId }
+}
+
+
+/* ============================================================
+   12) CHECKINS DO MÊS (TREINO + SUP)
+============================================================ */
+
+async function loadMonthCheckins() {
+  const base = state.monthCursor || new Date();
+  const y = base.getFullYear();
+  const m = base.getMonth() + 1;
+
+  try {
+    const data = await apiGet(`/api/checkins?year=${y}&month=${m}`);
+    // esperado: { "2026-02-14": { trained: true, supp: {"1": true} } }
+    state.checkins = data || {};
+  } catch (e) {
+    console.warn("loadMonthCheckins error:", e);
+    state.checkins = {};
+  }
+}
+
+function getDayState(dateStr) {
+  if (!state.checkins[dateStr]) {
+    state.checkins[dateStr] = { trained: false, supp: {} };
+  }
+  if (!state.checkins[dateStr].supp) state.checkins[dateStr].supp = {};
+  return state.checkins[dateStr];
+}
+
+async function toggleTrained(dateStr) {
+  const st = getDayState(dateStr);
+  const next = !st.trained;
+
+  try {
+    await apiPost("/api/checkin", { date: dateStr, trained: next });
+    st.trained = next;
+    renderCalendar();
+    renderDashboard();
+  } catch (e) {
+    showMsg(e.message || "Erro ao marcar treino.", "err");
+  }
+}
+
+async function toggleSupp(dateStr, suppId) {
+  const st = getDayState(dateStr);
+  const cur = !!st.supp[String(suppId)];
+  const next = !cur;
+
+  try {
+    await apiPost("/api/supp_checkin", {
+      date: dateStr,
+      supplement_id: suppId,
+      taken: next,
     });
+
+    st.supp[String(suppId)] = next;
+    renderCalendar();
+    renderDashboard();
+  } catch (e) {
+    showMsg(e.message || "Erro ao marcar suplemento.", "err");
+  }
+}
+
+
+/* ============================================================
+   13) CALENDÁRIO UI
+============================================================ */
+
+function daysInMonth(date) {
+  const d = new Date(date.getFullYear(), date.getMonth() + 1, 0);
+  return d.getDate();
+}
+
+function firstWeekday(date) {
+  // 0=domingo, 1=seg...
+  const d = new Date(date.getFullYear(), date.getMonth(), 1);
+  return d.getDay();
+}
+
+function isToday(dateObj) {
+  const n = new Date();
+  return (
+    dateObj.getFullYear() === n.getFullYear() &&
+    dateObj.getMonth() === n.getMonth() &&
+    dateObj.getDate() === n.getDate()
+  );
+}
+
+function renderCalendar() {
+  const grid = $("calendarGrid");
+  if (!grid) return;
+
+  clear(grid);
+
+  const base = state.monthCursor || new Date();
+  const total = daysInMonth(base);
+  const startDow = firstWeekday(base);
+
+  // espaços vazios antes do 1º dia
+  for (let i = 0; i < startDow; i++) {
+    const empty = el("div", "day empty");
+    empty.innerHTML = "&nbsp;";
+    grid.appendChild(empty);
   }
 
-  if (!r.ok) {
-    alert("Seu backend ainda não tem rota de remover suplemento. (Opcional)");
+  // dias
+  for (let d = 1; d <= total; d++) {
+    const dateObj = new Date(base.getFullYear(), base.getMonth(), d);
+    const dateStr = ymd(dateObj);
+
+    const card = el("div", "day");
+    if (isToday(dateObj)) card.classList.add("today");
+
+    const top = el("div", "day-top");
+    const num = el("div", "day-num", String(d));
+    const badge = el("div", "day-badge", "");
+    top.appendChild(num);
+    top.appendChild(badge);
+
+    const bottom = el("div", "day-bottom");
+
+    const st = getDayState(dateStr);
+
+    // resumo: treino ✅/❌
+    const treinoTxt = st.trained ? "Treino ✅" : "Treino ❌";
+
+    // suplementos: conta quantos ✅ no dia
+    let takenCount = 0;
+    const suppKeys = Object.keys(st.supp || {});
+    suppKeys.forEach((k) => {
+      if (st.supp[k]) takenCount++;
+    });
+
+    const suppTxt = state.supplements.length
+      ? `Suplementos ✅ ${takenCount}/${state.supplements.length}`
+      : "Sem suplementos";
+
+    bottom.innerHTML = `<div>${treinoTxt}</div><div>${suppTxt}</div>`;
+
+    card.appendChild(top);
+    card.appendChild(bottom);
+
+    // clique abre "modal" simples via confirm/choose
+    card.addEventListener("click", () => openDayEditor(dateStr));
+
+    grid.appendChild(card);
+  }
+}
+
+function openDayEditor(dateStr) {
+  // editor simples (sem modal pesado):
+  // 1) toggle treino via confirm
+  const st = getDayState(dateStr);
+  const wantToggleTrain = confirm(
+    `Dia ${dateStr}\n\nTreino está: ${st.trained ? "✅" : "❌"}\n\nOK = Alternar Treino\nCancelar = Continuar`
+  );
+
+  if (wantToggleTrain) {
+    toggleTrained(dateStr);
     return;
   }
 
-  await loadSupplements();
-  await loadMonthCheckins();
+  // suplementos (se houver)
+  if (!state.supplements.length) return;
+
+  // escolhe suplemento por prompt (simples e funcional)
+  let menu = `Dia ${dateStr}\n\nEscolha um suplemento para alternar:\n`;
+  state.supplements.forEach((s, idx) => {
+    const taken = !!st.supp[String(s.id)];
+    menu += `${idx + 1}) ${s.name}  [${taken ? "✅" : "❌"}]\n`;
+  });
+
+  const ans = prompt(menu + "\nDigite o número (ou deixe vazio):");
+  const n = Number(ans);
+  if (!n || n < 1 || n > state.supplements.length) return;
+
+  const chosen = state.supplements[n - 1];
+  toggleSupp(dateStr, chosen.id);
 }
 
-/* -----------------------------
-   Dashboard KPIs
------------------------------ */
 
-function renderKPIs() {
-  // workouts in month = number of days trained true
-  const days = Object.values(state.monthCheckins || {});
-  const workoutDays = days.filter((d) => d?.trained === true).length;
+/* ============================================================
+   14) DASHBOARD
+============================================================ */
 
-  // supplements taken = count of all true marks for this month
+function renderDashboard() {
+  // KPIs
+  const kpiWorkouts = $("kpiWorkouts");
+  const kpiSupp = $("kpiSupp");
+  const kpiPhotos = $("kpiPhotos");
+
+  // contar treinos do mês
+  let treinoCount = 0;
+
+  // contar suplementos ✅ do mês
   let suppTaken = 0;
-  days.forEach((d) => {
-    const supp = d?.supp || {};
-    Object.values(supp).forEach((v) => { if (v === true) suppTaken++; });
+
+  Object.keys(state.checkins || {}).forEach((dateStr) => {
+    const st = state.checkins[dateStr];
+    if (st?.trained) treinoCount++;
+    const supp = st?.supp || {};
+    Object.keys(supp).forEach((k) => {
+      if (supp[k]) suppTaken++;
+    });
   });
 
-  setText($("kpiWorkouts"), workoutDays);
-  setText($("kpiSupp"), suppTaken);
-  setText($("kpiPhotos"), Array.isArray(state.photos) ? state.photos.length : 0);
+  if (kpiWorkouts) kpiWorkouts.textContent = String(treinoCount);
+  if (kpiSupp) kpiSupp.textContent = String(suppTaken);
+  if (kpiPhotos) kpiPhotos.textContent = String(state.photos?.length || 0);
+
+  // suplement list chips
+  renderSuppList();
 }
 
-/* -----------------------------
-   Workouts
------------------------------ */
 
-function renderWorkouts() {
-  const list = $("workoutList");
-  if (!list) return;
+/* ============================================================
+   15) WORKOUTS (TREINOS)
+============================================================ */
 
-  if (!state.workouts.length) {
-    list.innerHTML = `<div class="muted">Nenhum treino salvo ainda.</div>`;
-    return;
+async function loadWorkouts() {
+  try {
+    const data = await apiGet("/api/workouts");
+    state.workouts = Array.isArray(data) ? data : (data?.items || []);
+  } catch (e) {
+    console.warn("loadWorkouts error:", e);
+    state.workouts = [];
   }
-
-  list.innerHTML = "";
-  state.workouts.forEach((w) => {
-    const card = document.createElement("div");
-    card.className = "item";
-    const title = w.title || w.name || "Treino";
-    const text = w.text || w.content || w.body || "";
-
-    card.innerHTML = `
-      <div class="item-head">
-        <div class="item-title">${escapeHTML(title)}</div>
-        <div class="row">
-          <button type="button" class="btn ghost btn-sm" data-act="copy">Copiar</button>
-        </div>
-      </div>
-      <pre class="item-body">${escapeHTML(text)}</pre>
-    `;
-
-    card.querySelector('[data-act="copy"]').addEventListener("click", async () => {
-      try {
-        await navigator.clipboard.writeText(`${title}\n\n${text}`);
-        alert("Copiado ✅");
-      } catch {
-        alert("Não deu pra copiar.");
-      }
-    });
-
-    list.appendChild(card);
-  });
+  renderWorkouts();
 }
 
 async function saveWorkout() {
@@ -773,343 +838,362 @@ async function saveWorkout() {
   const text = ($("workoutText")?.value || "").trim();
 
   if (!title || !text) {
-    alert("Preencha nome e conteúdo do treino.");
+    showMsg("Preencha nome e treino.", "err");
     return;
   }
 
-  const r = await apiFetch("/workouts/save", {
-    method: "POST",
-    token: TOKEN,
-    json: { title, text }
+  try {
+    await apiPost("/api/workouts/save", { title, text });
+    $("workoutTitle").value = "";
+    $("workoutText").value = "";
+    await loadWorkouts();
+    showMsg("Treino salvo!", "ok");
+  } catch (e) {
+    showMsg(e.message || "Erro ao salvar treino.", "err");
+  }
+}
+
+function renderWorkouts() {
+  const wrap = $("workoutList");
+  if (!wrap) return;
+
+  clear(wrap);
+
+  if (!state.workouts.length) {
+    wrap.appendChild(el("div", "muted", "Nenhum treino salvo ainda."));
+    return;
+  }
+
+  state.workouts.forEach((w) => {
+    const card = el("div", "item");
+
+    const head = el("div", "item-head");
+    const title = el("div", "item-title", w.title || "Treino");
+    const btn = el("button", "btn btn-sm ghost", "Ver");
+    head.appendChild(title);
+    head.appendChild(btn);
+
+    const body = el("pre", "item-body");
+    body.textContent = "";
+    body.classList.add("hidden");
+
+    btn.addEventListener("click", () => {
+      body.classList.toggle("hidden");
+      if (!body.textContent) body.textContent = w.text || "";
+      btn.textContent = body.classList.contains("hidden") ? "Ver" : "Fechar";
+    });
+
+    card.appendChild(head);
+    card.appendChild(body);
+
+    wrap.appendChild(card);
   });
-
-  if (!r.ok) {
-    alert(safeDetail(r.data) || "Falha ao salvar treino.");
-    return;
-  }
-
-  $("workoutTitle").value = "";
-  $("workoutText").value = "";
-  await loadWorkouts();
 }
 
-/* -----------------------------
-   Profile + Recommendations
------------------------------ */
 
-function getProfileFromInputs() {
-  const h = parseInt(($("height")?.value || "").trim(), 10);
-  const w = parseFloat(($("weight")?.value || "").trim());
-  const b = ($("biotype")?.value || "").trim();
+/* ============================================================
+   16) PHOTOS (FÍSICO)
+============================================================ */
 
-  const height_cm = Number.isFinite(h) ? h : null;
-  const weight_kg = Number.isFinite(w) ? w : null;
-  const biotype = b || null;
-
-  return { height_cm, weight_kg, biotype };
-}
-
-function fillProfileInputs(p) {
-  if (!p) return;
-  if ($("height")) $("height").value = p.height_cm ?? "";
-  if ($("weight")) $("weight").value = p.weight_kg ?? "";
-  if ($("biotype")) $("biotype").value = p.biotype ?? "";
-}
-
-function calcRecommendation(p) {
-  // Simples, mas profissional: IMC + foco por biotipo
-  if (!p?.height_cm || !p?.weight_kg) {
-    return "Preencha altura e peso para calcular IMC e recomendações.";
+async function loadPhotos() {
+  try {
+    const data = await apiGet("/api/photos");
+    state.photos = Array.isArray(data) ? data : (data?.items || []);
+  } catch (e) {
+    console.warn("loadPhotos error:", e);
+    state.photos = [];
   }
-
-  const h = p.height_cm / 100;
-  const imc = p.weight_kg / (h * h);
-
-  let imcClass = "";
-  if (imc < 18.5) imcClass = "Abaixo do peso";
-  else if (imc < 25) imcClass = "Peso normal";
-  else if (imc < 30) imcClass = "Sobrepeso";
-  else imcClass = "Obesidade";
-
-  let focus = "";
-  let split = "";
-  let cardio = "";
-  let reps = "";
-  let diet = "";
-
-  const bio = (p.biotype || "").toLowerCase();
-
-  if (bio === "ectomorfo") {
-    focus = "Hipertrofia com progressão de carga (ganho de massa).";
-    split = "Sugestão: Upper/Lower 4x/sem ou ABC 5x/sem.";
-    cardio = "Cardio moderado (2x/sem 15–20min) só para condicionamento.";
-    reps = "Priorize 6–12 reps, compostos pesados + acessórios.";
-    diet = "Superávit calórico leve e proteína consistente.";
-  } else if (bio === "mesomorfo") {
-    focus = "Hipertrofia + força (equilíbrio).";
-    split = "Sugestão: Push/Pull/Legs ou Upper/Lower.";
-    cardio = "Cardio 2–3x/sem 15–25min.";
-    reps = "Misture blocos de força (3–6 reps) e hipertrofia (8–12).";
-    diet = "Manutenção/superávit leve conforme objetivo.";
-  } else if (bio === "endomorfo") {
-    focus = "Recomposição (força + hipertrofia) com controle de gordura.";
-    split = "Sugestão: Fullbody 3–4x/sem ou Upper/Lower 4x/sem.";
-    cardio = "Cardio 3–4x/sem 20–35min (LISS ou intervalado leve).";
-    reps = "8–15 reps, descanso controlado e muita consistência.";
-    diet = "Déficit leve/controle de carbo e proteína alta.";
-  } else {
-    focus = "Defina o biotipo para recomendações mais específicas.";
-    split = "Sugestão geral: Upper/Lower 4x/sem.";
-    cardio = "Cardio 2–3x/sem 20min.";
-    reps = "8–12 reps na maioria dos exercícios.";
-    diet = "Ajuste calorias conforme objetivo.";
-  }
-
-  return [
-    `IMC: ${imc.toFixed(1)} (${imcClass}).`,
-    "",
-    `Foco: ${focus}`,
-    split,
-    reps,
-    cardio,
-    `Nutrição: ${diet}`,
-    "",
-    "Obs: isso é uma recomendação geral. Se tiver lesões/condições, ajuste com profissional."
-  ].join("\n");
-}
-
-function renderProfile() {
-  // fill inputs
-  fillProfileInputs(state.profile);
-
-  // calc recommendation
-  const p = state.profile || getProfileFromInputs();
-  setText($("recommendation"), calcRecommendation(p));
-}
-
-async function saveProfile() {
-  const p = getProfileFromInputs();
-
-  if (!p.height_cm || !p.weight_kg) {
-    alert("Altura e peso são obrigatórios.");
-    return;
-  }
-
-  const r = await apiFetch("/profile", {
-    method: "POST",
-    token: TOKEN,
-    json: p
-  });
-
-  if (!r.ok) {
-    alert(safeDetail(r.data) || "Falha ao salvar perfil.");
-    return;
-  }
-
-  state.profile = r.data || p;
-  renderProfile();
-  alert("Perfil salvo ✅");
-}
-
-/* -----------------------------
-   Photos (optional endpoints)
------------------------------ */
-
-function renderPhotos() {
-  const grid = $("photoGrid");
-  if (!grid) return;
-
-  if (!state.photos || !state.photos.length) {
-    grid.innerHTML = `
-      <div class="muted">
-        Nenhuma foto ainda. Envie acima.
-        <br><br>
-        <small>Se o backend não tiver /api/photos, esta área fica só no frontend (não recomendado).</small>
-      </div>
-    `;
-    return;
-  }
-
-  grid.innerHTML = "";
-  state.photos.forEach((p) => {
-    // esperamos algo como {url, created_at, note}
-    const url = p.url || p.path || "";
-    const note = p.note || "";
-    const when = p.created_at || p.date || "";
-
-    const card = document.createElement("div");
-    card.className = "photo-card";
-
-    card.innerHTML = `
-      <div class="photo-img">
-        ${url ? `<img src="${escapeAttr(url)}" alt="foto" />` : `<div class="muted">Sem URL</div>`}
-      </div>
-      <div class="photo-meta">
-        <div class="muted">${escapeHTML(String(when || ""))}</div>
-        <div>${escapeHTML(note)}</div>
-      </div>
-    `;
-
-    grid.appendChild(card);
-  });
+  renderPhotos();
 }
 
 async function uploadPhoto() {
   const fileInput = $("photoFile");
   const noteInput = $("photoNote");
-  const file = fileInput?.files?.[0] || null;
+
+  const file = fileInput?.files?.[0];
   const note = (noteInput?.value || "").trim();
 
   if (!file) {
-    alert("Selecione uma imagem.");
+    showMsg("Selecione uma imagem.", "err");
     return;
   }
 
-  const fd = new FormData();
-  fd.append("file", file);
-  fd.append("note", note);
+  try {
+    const fd = new FormData();
+    fd.append("file", file);
+    fd.append("note", note);
 
-  // try /photos/upload
-  let r = await apiPostFormData("/photos/upload", fd, TOKEN);
-  if (!r.ok) {
-    // fallback
-    r = await apiPostFormData("/physique/photos/upload", fd, TOKEN);
+    await apiUpload("/api/photos/upload", fd);
+
+    // reset
+    fileInput.value = "";
+    if (noteInput) noteInput.value = "";
+
+    await loadPhotos();
+    renderDashboard();
+    showMsg("Foto enviada!", "ok");
+  } catch (e) {
+    showMsg(e.message || "Erro ao enviar foto.", "err");
   }
+}
 
-  if (!r.ok) {
-    alert("Seu backend ainda não tem endpoint de upload de fotos (/api/photos/upload).");
+function renderPhotos() {
+  const grid = $("photoGrid");
+  if (!grid) return;
+
+  clear(grid);
+
+  if (!state.photos.length) {
+    grid.appendChild(el("div", "muted", "Nenhuma foto enviada ainda."));
     return;
   }
 
-  if (noteInput) noteInput.value = "";
-  if (fileInput) fileInput.value = "";
+  state.photos.forEach((p) => {
+    const card = el("div", "photo-card");
 
-  await loadPhotos();
-  alert("Foto enviada ✅");
+    const imgWrap = el("div", "photo-img");
+    const img = document.createElement("img");
+
+    // esperado: p.url ou endpoint /api/photos/{id}
+    img.src = p.url || `${API_BASE}/api/photos/${p.id}`;
+    img.alt = p.note || "Foto";
+
+    imgWrap.appendChild(img);
+
+    const meta = el("div", "photo-meta");
+    const dateTxt = p.created_at ? String(p.created_at).slice(0, 10) : "";
+    meta.innerHTML = `<div><b>${dateTxt}</b></div><div class="muted">${p.note || ""}</div>`;
+
+    card.appendChild(imgWrap);
+    card.appendChild(meta);
+    grid.appendChild(card);
+  });
 }
 
-/* -----------------------------
-   Month nav
------------------------------ */
 
-function prevMonth() {
-  state.monthM -= 1;
-  if (state.monthM < 0) {
-    state.monthM = 11;
-    state.monthY -= 1;
+/* ============================================================
+   17) PROFILE / STATS + RECOMENDAÇÃO
+============================================================ */
+
+async function loadProfile() {
+  try {
+    const data = await apiGet("/api/profile");
+    // esperado: {height_cm, weight_kg, biotype}
+    if (data) {
+      if ($("height")) $("height").value = data.height_cm ?? "";
+      if ($("weight")) $("weight").value = data.weight_kg ?? "";
+      if ($("biotype")) $("biotype").value = data.biotype ?? "";
+    }
+  } catch (e) {
+    // ok se não existir ainda
   }
-  loadMonthCheckins();
+  renderRecommendation();
 }
 
-function nextMonth() {
-  state.monthM += 1;
-  if (state.monthM > 11) {
-    state.monthM = 0;
-    state.monthY += 1;
+async function saveProfile() {
+  const height = Number(($("height")?.value || "").trim());
+  const weight = Number(($("weight")?.value || "").trim());
+  const biotype = ($("biotype")?.value || "").trim();
+
+  if (!height || !weight || !biotype) {
+    showMsg("Preencha altura, peso e biotipo.", "err");
+    return;
   }
-  loadMonthCheckins();
-}
 
-/* -----------------------------
-   Escaping
------------------------------ */
-
-function escapeHTML(s) {
-  return String(s ?? "")
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#039;");
-}
-
-function escapeAttr(s) {
-  return escapeHTML(s).replaceAll("`", "&#096;");
-}
-
-/* -----------------------------
-   Bind events
------------------------------ */
-
-function bindEvents() {
-  // Auth
-  $("btnLogin")?.addEventListener("click", doLogin);
-  $("btnRegister")?.addEventListener("click", doRegister);
-  $("btnLogout")?.addEventListener("click", doLogout);
-
-  // Sidebar nav
-  $$(".nav-btn").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const key = btn.dataset.view;
-      openAppView(key);
+  try {
+    await apiPost("/api/profile", {
+      height_cm: height,
+      weight_kg: weight,
+      biotype: biotype,
     });
-  });
-
-  // Calendar month nav
-  $("prevMonth")?.addEventListener("click", prevMonth);
-  $("nextMonth")?.addEventListener("click", nextMonth);
-
-  // Supplements
-  $("btnAddSupp")?.addEventListener("click", addSupplement);
-  $("suppName")?.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") addSupplement();
-  });
-
-  // Workouts
-  $("btnSaveWorkout")?.addEventListener("click", saveWorkout);
-
-  // Profile
-  $("btnSaveProfile")?.addEventListener("click", saveProfile);
-  ["height", "weight", "biotype"].forEach((id) => {
-    $(id)?.addEventListener("input", () => {
-      // live preview recommendation (client-side)
-      const p = getProfileFromInputs();
-      setText($("recommendation"), calcRecommendation(p));
-    });
-  });
-
-  // Photos
-  $("btnUploadPhoto")?.addEventListener("click", uploadPhoto);
+    showMsg("Dados salvos!", "ok");
+    renderRecommendation();
+  } catch (e) {
+    showMsg(e.message || "Erro ao salvar perfil.", "err");
+  }
 }
 
-/* -----------------------------
-   Init
------------------------------ */
+function renderRecommendation() {
+  const out = $("recommendation");
+  if (!out) return;
 
-async function init() {
-  bindEvents();
+  const height = Number(($("height")?.value || "").trim());
+  const weight = Number(($("weight")?.value || "").trim());
+  const biotype = ($("biotype")?.value || "").trim();
 
-  // initial topbar
-  setTopbar("Entrar", "Suas fotos e dados ficam salvos no servidor (não dependem do navegador).");
+  if (!height || !weight || !biotype) {
+    out.textContent = "Preencha seus dados para gerar.";
+    return;
+  }
 
-  // if token exists, auto-login
-  if (TOKEN) {
-    setAuthMsg("Restaurando sessão...", true);
-    const me = await apiFetch("/me", { token: TOKEN });
+  // IMC
+  const hM = height / 100;
+  const bmi = weight / (hM * hM);
 
-    if (me.ok) {
-      ME = me.data || null;
-      await bootApp();
+  // sugestão por biotipo (heurística simples)
+  let focus = "";
+  let freq = "";
+  let cardio = "";
+  let volume = "";
+
+  if (biotype === "ectomorfo") {
+    focus = "Hipertrofia com progressão de carga e superávit calórico.";
+    freq = "4–5x/semana";
+    cardio = "Baixo (1–2x leve) para não atrapalhar ganho de massa.";
+    volume = "Volume moderado/alto, descanso 90–150s em compostos.";
+  } else if (biotype === "mesomorfo") {
+    focus = "Hipertrofia + força (periodização).";
+    freq = "4–6x/semana";
+    cardio = "Moderado (2–3x) para condicionamento.";
+    volume = "Volume moderado, foco em execução perfeita e progressão.";
+  } else if (biotype === "endomorfo") {
+    focus = "Recomposição: força/hipertrofia + controle calórico.";
+    freq = "4–6x/semana";
+    cardio = "Moderado/alto (3–5x) conforme recuperação.";
+    volume = "Volume moderado, densidade (descanso menor) + passos diários.";
+  }
+
+  const bmiClass =
+    bmi < 18.5 ? "Abaixo do peso" :
+    bmi < 25 ? "Peso normal" :
+    bmi < 30 ? "Sobrepeso" :
+    "Obesidade";
+
+  out.textContent =
+`📌 Estatística automática
+
+Altura: ${height} cm
+Peso: ${weight} kg
+IMC: ${bmi.toFixed(1)} (${bmiClass})
+Biotipo: ${biotype}
+
+🎯 Foco recomendado:
+- ${focus}
+
+📅 Frequência:
+- ${freq}
+
+🏃 Cardio:
+- ${cardio}
+
+🏋️ Volume/descanso:
+- ${volume}
+
+✅ Observação:
+- Isso é uma recomendação geral (não substitui profissional). Ajuste conforme recuperação e objetivo.`;
+}
+
+
+/* ============================================================
+   18) BIND DE BOTÕES (evitar handlers duplicados)
+============================================================ */
+
+function bindAuthButtons() {
+  const bLogin = $("btnLogin");
+  const bReg = $("btnRegister");
+
+  if (bLogin) {
+    bLogin.addEventListener("click", () => {
+      onceBusy(bLogin, doLogin);
+    });
+  }
+
+  if (bReg) {
+    bReg.addEventListener("click", () => {
+      onceBusy(bReg, doRegister);
+    });
+  }
+}
+
+function bindMonthButtons() {
+  const prev = $("prevMonth");
+  const next = $("nextMonth");
+
+  if (prev) prev.addEventListener("click", () => moveMonth(-1));
+  if (next) next.addEventListener("click", () => moveMonth(+1));
+}
+
+function bindSupplementButtons() {
+  const btn = $("btnAddSupp");
+  if (btn) {
+    btn.addEventListener("click", () => onceBusy(btn, addSupplement));
+  }
+}
+
+function bindWorkoutButtons() {
+  const btn = $("btnSaveWorkout");
+  if (btn) {
+    btn.addEventListener("click", () => onceBusy(btn, saveWorkout));
+  }
+}
+
+function bindPhotoButtons() {
+  const btn = $("btnUploadPhoto");
+  if (btn) {
+    btn.addEventListener("click", () => onceBusy(btn, uploadPhoto));
+  }
+}
+
+function bindProfileButtons() {
+  const btn = $("btnSaveProfile");
+  if (btn) {
+    btn.addEventListener("click", () => onceBusy(btn, saveProfile));
+  }
+
+  const live = debounce(renderRecommendation, 180);
+  if ($("height")) $("height").addEventListener("input", live);
+  if ($("weight")) $("weight").addEventListener("input", live);
+  if ($("biotype")) $("biotype").addEventListener("change", live);
+}
+
+function bindLogout() {
+  const btn = $("btnLogout");
+  if (btn) btn.addEventListener("click", doLogout);
+}
+
+
+/* ============================================================
+   19) INIT (quando carrega a página)
+============================================================ */
+
+async function initApp() {
+  // bind geral
+  bindNavButtons();
+  bindAuthButtons();
+  bindMonthButtons();
+  bindSupplementButtons();
+  bindWorkoutButtons();
+  bindPhotoButtons();
+  bindProfileButtons();
+  bindLogout();
+
+  // mês
+  initMonthCursor();
+  updateMonthLabels();
+
+  // se tem token, tenta logar silencioso
+  if (getToken()) {
+    try {
+      await bootstrapAfterLogin();
+      return;
+    } catch (e) {
+      console.warn("Silent login failed:", e);
+      setToken("");
+      showAuthOnly();
+      showMsg("Faça login novamente.", "err");
       return;
     }
-
-    // token invalid
-    clearToken();
-    TOKEN = "";
-    ME = null;
-    setAuthMsg("Sessão expirada. Faça login novamente.");
-  } else {
-    setAuthMsg("");
   }
 
-  // show auth
-  show($("authView"));
-  hide($("appView"));
-  setStatus(false);
-
-  // month labels
-  setText($("monthLabel"), fmtMonthLabel(state.monthY, state.monthM));
-  setText($("calendarMonth"), fmtMonthLabel(state.monthY, state.monthM));
+  // sem token
+  showAuthOnly();
 }
 
-document.addEventListener("DOMContentLoaded", init);
+document.addEventListener("DOMContentLoaded", () => {
+  initApp();
+});
+
+
+/* ============================================================
+   FIM DO ARQUIVO
+============================================================ */
